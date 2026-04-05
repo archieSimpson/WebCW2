@@ -1,6 +1,7 @@
 """Web crawler for the COMP3011 search engine."""
 
-from urllib.parse import urlparse
+import urllib.robotparser
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -16,6 +17,24 @@ class Crawler:
         )
         self.pages = {}
         self.visited = set()
+        self.rp = urllib.robotparser.RobotFileParser()
+        self._load_robots_txt()
+
+    def _load_robots_txt(self):
+        """Fetch and parse robots.txt; failures are non-fatal."""
+        robots_url = urljoin(self.base_url, '/robots.txt')
+        try:
+            self.rp.set_url(robots_url)
+            self.rp.read()
+        except Exception:
+            pass
+
+    def _is_allowed(self, url):
+        """Return True when robots.txt allows fetching url."""
+        try:
+            return self.rp.can_fetch('*', url)
+        except Exception:
+            return True
 
     def _is_same_domain(self, url):
         """Return True when url is on the same netloc as the seed."""

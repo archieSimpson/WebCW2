@@ -20,3 +20,7 @@ class Crawler:
     def _is_same_domain(self, url):
         """Return True when url is on the same netloc as the seed."""
         return urlparse(url).netloc == urlparse(self.base_url).netloc
+
+    def _normalise_url(self, url):
+        """Strip fragment and query so equivalent urls collapse to one."""
+        return url.split('#')[0].split('?')[0]

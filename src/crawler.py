@@ -5,6 +5,7 @@ from collections import deque
 from urllib.parse import urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 
 class Crawler:
@@ -58,6 +59,20 @@ class Crawler:
             print(f"Crawling: {url}")
             response = self.session.get(url)
             response.raise_for_status()
+
+            if 'text/html' not in response.headers.get('Content-Type', ''):
+                continue
+
             self.pages[url] = response.text
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for tag in soup.find_all('a', href=True):
+                link = urljoin(url, tag['href'])
+                link = self._normalise_url(link)
+                if (link not in self.visited
+                        and self._is_same_domain(link)
+                        and link.startswith('http')):
+                    self.visited.add(link)
+                    queue.append(link)
 
         return self.pages

@@ -1,6 +1,7 @@
 """Web crawler for the COMP3011 search engine."""
 
 import urllib.robotparser
+from collections import deque
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -43,3 +44,20 @@ class Crawler:
     def _normalise_url(self, url):
         """Strip fragment and query so equivalent urls collapse to one."""
         return url.split('#')[0].split('?')[0]
+
+    def crawl(self):
+        """Run the BFS crawl and return {url: html}."""
+        queue = deque([self.base_url])
+        self.visited.add(self.base_url)
+
+        while queue:
+            url = queue.popleft()
+            if not self._is_allowed(url):
+                print(f"Skipping (robots.txt): {url}")
+                continue
+            print(f"Crawling: {url}")
+            response = self.session.get(url)
+            response.raise_for_status()
+            self.pages[url] = response.text
+
+        return self.pages

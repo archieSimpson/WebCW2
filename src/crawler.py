@@ -1,5 +1,6 @@
 """Web crawler for the COMP3011 search engine."""
 
+import time
 import urllib.robotparser
 from collections import deque
 from urllib.parse import urljoin, urlparse
@@ -11,8 +12,9 @@ from bs4 import BeautifulSoup
 class Crawler:
     """Breadth-first crawler that collects {url: html}."""
 
-    def __init__(self, base_url):
+    def __init__(self, base_url, politeness_window=6):
         self.base_url = base_url
+        self.politeness_window = politeness_window
         self.session = requests.Session()
         self.session.headers.update(
             {'User-Agent': 'COMP3011Crawler/1.0'}
@@ -56,23 +58,30 @@ class Crawler:
             if not self._is_allowed(url):
                 print(f"Skipping (robots.txt): {url}")
                 continue
-            print(f"Crawling: {url}")
-            response = self.session.get(url)
-            response.raise_for_status()
 
-            if 'text/html' not in response.headers.get('Content-Type', ''):
-                continue
+            try:
+                print(f"Crawling: {url}")
+                response = self.session.get(url)
+                response.raise_for_status()
 
-            self.pages[url] = response.text
+                if 'text/html' not in response.headers.get('Content-Type', ''):
+                    continue
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            for tag in soup.find_all('a', href=True):
-                link = urljoin(url, tag['href'])
-                link = self._normalise_url(link)
-                if (link not in self.visited
-                        and self._is_same_domain(link)
-                        and link.startswith('http')):
-                    self.visited.add(link)
-                    queue.append(link)
+                self.pages[url] = response.text
+
+                soup = BeautifulSoup(response.text, 'html.parser')
+                for tag in soup.find_all('a', href=True):
+                    link = urljoin(url, tag['href'])
+                    link = self._normalise_url(link)
+                    if (link not in self.visited
+                            and self._is_same_domain(link)
+                            and link.startswith('http')):
+                        self.visited.add(link)
+                        queue.append(link)
+
+                time.sleep(self.politeness_window)
+
+            except requests.RequestException as e:
+                print(f"Error crawling {url}: {e}")
 
         return self.pages

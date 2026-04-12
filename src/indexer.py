@@ -2,6 +2,8 @@
 
 import re
 
+from bs4 import BeautifulSoup
+
 
 class Indexer:
     """Builds a word -> {url -> count} inverted index."""
@@ -18,3 +20,10 @@ class Indexer:
         Drops numbers and punctuation; splits hyphenated words.
         """
         return self._TOKEN_RE.findall(text.lower())
+
+    def _extract_text(self, html):
+        """Return visible text from html, stripped of script/style."""
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(['script', 'style']):
+            tag.decompose()
+        return soup.get_text(separator=' ')

@@ -27,3 +27,15 @@ class Indexer:
         for tag in soup(['script', 'style']):
             tag.decompose()
         return soup.get_text(separator=' ')
+
+    def index_page(self, url, html):
+        """Index a single page — updates word counts per url."""
+        text = self._extract_text(html)
+        words = self._tokenise(text)
+        self.doc_count += 1
+        for word in words:
+            if word not in self.index:
+                self.index[word] = {}
+            if url not in self.index[word]:
+                self.index[word][url] = {'count': 0}
+            self.index[word][url]['count'] += 1

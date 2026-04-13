@@ -29,13 +29,14 @@ class Indexer:
         return soup.get_text(separator=' ')
 
     def index_page(self, url, html):
-        """Index a single page — updates word counts per url."""
+        """Index a single page — counts plus positions per word per url."""
         text = self._extract_text(html)
         words = self._tokenise(text)
         self.doc_count += 1
-        for word in words:
+        for position, word in enumerate(words):
             if word not in self.index:
                 self.index[word] = {}
             if url not in self.index[word]:
-                self.index[word][url] = {'count': 0}
+                self.index[word][url] = {'count': 0, 'positions': []}
             self.index[word][url]['count'] += 1
+            self.index[word][url]['positions'].append(position)

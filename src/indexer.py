@@ -6,13 +6,14 @@ from bs4 import BeautifulSoup
 
 
 class Indexer:
-    """Builds a word -> {url -> count} inverted index."""
+    """Builds a positional inverted index from {url: html} pages."""
 
     _TOKEN_RE = re.compile(r'[a-z]+')
 
     def __init__(self):
         self.index = {}
         self.doc_count = 0
+        self.doc_lengths = {}
 
     def _tokenise(self, text):
         """Lowercase text and return all ASCII-letter runs.
@@ -29,10 +30,11 @@ class Indexer:
         return soup.get_text(separator=' ')
 
     def index_page(self, url, html):
-        """Index a single page — counts plus positions per word per url."""
+        """Index a single page — counts, positions, and length."""
         text = self._extract_text(html)
         words = self._tokenise(text)
         self.doc_count += 1
+        self.doc_lengths[url] = len(words)
         for position, word in enumerate(words):
             if word not in self.index:
                 self.index[word] = {}
@@ -40,3 +42,9 @@ class Indexer:
                 self.index[word][url] = {'count': 0, 'positions': []}
             self.index[word][url]['count'] += 1
             self.index[word][url]['positions'].append(position)
+
+    def build_from_pages(self, pages):
+        """Index every (url, html) pair in pages."""
+        for url, html in pages.items():
+            print(f"Indexing: {url}")
+            self.index_page(url, html)

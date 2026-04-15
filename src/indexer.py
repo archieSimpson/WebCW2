@@ -1,5 +1,6 @@
 """Inverted index for the COMP3011 search engine."""
 
+import json
 import math
 import re
 
@@ -51,11 +52,7 @@ class Indexer:
             self.index_page(url, html)
 
     def get_tfidf(self, word, url):
-        """Return TF-IDF for word in document url.
-
-        Uses smoothed IDF (log((N+1)/(df+1)) + 1) so terms appearing in
-        every document don't blow up on log(0).
-        """
+        """Return TF-IDF for word in document url."""
         if word not in self.index or url not in self.index[word]:
             return 0.0
         tf = self.index[word][url]['count'] / max(
@@ -63,3 +60,23 @@ class Indexer:
         df = len(self.index[word])
         idf = math.log((self.doc_count + 1) / (df + 1)) + 1
         return tf * idf
+
+    def save(self, filepath):
+        """Serialise the index to filepath as JSON."""
+        data = {
+            'index': self.index,
+            'doc_count': self.doc_count,
+            'doc_lengths': self.doc_lengths,
+        }
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        print(f"Index saved to {filepath}")
+
+    def load(self, filepath):
+        """Load a previously saved index from filepath."""
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        self.index = data['index']
+        self.doc_count = data['doc_count']
+        self.doc_lengths = data['doc_lengths']
+        print(f"Index loaded from {filepath}")

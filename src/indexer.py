@@ -1,5 +1,6 @@
 """Inverted index for the COMP3011 search engine."""
 
+import math
 import re
 
 from bs4 import BeautifulSoup
@@ -48,3 +49,17 @@ class Indexer:
         for url, html in pages.items():
             print(f"Indexing: {url}")
             self.index_page(url, html)
+
+    def get_tfidf(self, word, url):
+        """Return TF-IDF for word in document url.
+
+        Uses smoothed IDF (log((N+1)/(df+1)) + 1) so terms appearing in
+        every document don't blow up on log(0).
+        """
+        if word not in self.index or url not in self.index[word]:
+            return 0.0
+        tf = self.index[word][url]['count'] / max(
+            self.doc_lengths.get(url, 1), 1)
+        df = len(self.index[word])
+        idf = math.log((self.doc_count + 1) / (df + 1)) + 1
+        return tf * idf

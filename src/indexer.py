@@ -7,6 +7,11 @@ import re
 from bs4 import BeautifulSoup
 
 
+# JSON schema version. Bump when the on-disk format changes so that
+# load() can reject incompatible files instead of silently mis-parsing.
+INDEX_SCHEMA_VERSION = 1
+
+
 class Indexer:
     """Builds a positional inverted index from {url: html} pages."""
 
@@ -64,6 +69,7 @@ class Indexer:
     def save(self, filepath):
         """Serialise the index to filepath as JSON."""
         data = {
+            'schema_version': INDEX_SCHEMA_VERSION,
             'index': self.index,
             'doc_count': self.doc_count,
             'doc_lengths': self.doc_lengths,
@@ -73,9 +79,20 @@ class Indexer:
         print(f"Index saved to {filepath}")
 
     def load(self, filepath):
-        """Load a previously saved index from filepath."""
+        """Load a previously saved index from filepath.
+
+        Files written without ``schema_version`` are treated as v1 for
+        backwards compatibility; files with a higher version raise so
+        a stale binary doesn't mis-parse a newer format.
+        """
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        version = data.get('schema_version', 1)
+        if version > INDEX_SCHEMA_VERSION:
+            raise ValueError(
+                f"Index file schema v{version} is newer than the "
+                f"supported v{INDEX_SCHEMA_VERSION}."
+            )
         self.index = data['index']
         self.doc_count = data['doc_count']
         self.doc_lengths = data['doc_lengths']

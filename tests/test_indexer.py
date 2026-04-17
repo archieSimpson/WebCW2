@@ -67,3 +67,63 @@ class TestIndexerExtractText:
         text = self.indexer._extract_text(html)
         assert 'deep' in text
         assert 'text' in text
+
+
+class TestIndexerIndexPage:
+
+    def setup_method(self):
+        self.indexer = Indexer()
+
+    def test_word_count_stored(self):
+        self.indexer.index_page("http://a.com", "<p>fish fish tropical</p>")
+        assert self.indexer.index['fish']['http://a.com']['count'] == 2
+
+    def test_positions_stored(self):
+        self.indexer.index_page("http://a.com", "<p>one two one</p>")
+        positions = self.indexer.index['one']['http://a.com']['positions']
+        assert len(positions) == 2
+
+    def test_case_insensitive(self):
+        self.indexer.index_page("http://a.com", "<p>Good good GOOD</p>")
+        assert self.indexer.index['good']['http://a.com']['count'] == 3
+
+    def test_missing_word_not_in_index(self):
+        self.indexer.index_page("http://a.com", "<p>hello world</p>")
+        assert 'xyz' not in self.indexer.index
+
+    def test_doc_count_increments(self):
+        self.indexer.index_page("http://a.com", "<p>hello</p>")
+        self.indexer.index_page("http://b.com", "<p>world</p>")
+        assert self.indexer.doc_count == 2
+
+    def test_doc_length_stored(self):
+        self.indexer.index_page("http://a.com", "<p>one two three</p>")
+        assert self.indexer.doc_lengths['http://a.com'] > 0
+
+    def test_multiple_pages_independent(self):
+        self.indexer.index_page("http://a.com", "<p>fish</p>")
+        self.indexer.index_page("http://b.com", "<p>tropical</p>")
+        assert 'http://b.com' not in self.indexer.index.get('fish', {})
+
+    def test_position_order_correct(self):
+        self.indexer.index_page("http://a.com", "<p>alpha beta alpha</p>")
+        positions = self.indexer.index['alpha']['http://a.com']['positions']
+        assert positions[0] < positions[1]
+
+    def test_scripts_not_indexed(self):
+        self.indexer.index_page(
+            "http://a.com", "<script>javascript</script><p>hello</p>")
+        assert 'javascript' not in self.indexer.index
+
+    def test_empty_page_does_not_crash(self):
+        self.indexer.index_page("http://a.com", "")
+        assert self.indexer.doc_count == 1
+
+    def test_single_word_page(self):
+        self.indexer.index_page("http://a.com", "<p>serendipity</p>")
+        assert 'serendipity' in self.indexer.index
+
+    def test_positions_are_integers(self):
+        self.indexer.index_page("http://a.com", "<p>hello world</p>")
+        positions = self.indexer.index['hello']['http://a.com']['positions']
+        assert all(isinstance(p, int) for p in positions)

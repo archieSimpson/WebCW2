@@ -7,6 +7,9 @@ class SearchEngine:
     # Multiplicative weight applied to each contiguous-phrase match.
     PHRASE_WEIGHT = 2.0
 
+    # Maximum number of suggestions returned by ``suggest``.
+    MAX_SUGGESTIONS = 5
+
     def __init__(self, indexer):
         self.indexer = indexer
 
@@ -41,6 +44,19 @@ class SearchEngine:
                 score += self._phrase_bonus(terms, url)
             results.append((url, round(score, 4)))
         return sorted(results, key=lambda x: x[1], reverse=True)
+
+    def suggest(self, partial_word):
+        """Return up to MAX_SUGGESTIONS prefix-match candidates.
+
+        Useful when the user typed a partial word — ``go`` → ``good``.
+        """
+        if not partial_word:
+            return []
+        partial = partial_word.lower()
+        matches = [
+            w for w in self.indexer.index if w.startswith(partial)
+        ]
+        return matches[:self.MAX_SUGGESTIONS]
 
     def print_index(self, word):
         """Pretty-print the inverted-index entry for ``word``."""

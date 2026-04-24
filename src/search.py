@@ -42,6 +42,36 @@ class SearchEngine:
             results.append((url, round(score, 4)))
         return sorted(results, key=lambda x: x[1], reverse=True)
 
+    def print_index(self, word):
+        """Pretty-print the inverted-index entry for ``word``."""
+        word = word.lower().strip()
+        if not word:
+            print("Please provide a word.")
+            return
+        if word not in self.indexer.index:
+            print(f"'{word}' not found in index.")
+            return
+
+        entries = self.indexer.index[word]
+        print(f"\nInverted index for '{word}' "
+              f"({len(entries)} document(s)):")
+        print(
+            f"\n  {'URL':<60} {'Count':>6}  {'TF-IDF':>8}  "
+            f"Positions (first 10)"
+        )
+        print(f"  {'-' * 100}")
+        for url, data in sorted(
+                entries.items(),
+                key=lambda x: x[1]['count'],
+                reverse=True):
+            tfidf = round(self.indexer.get_tfidf(word, url), 4)
+            positions_preview = data['positions'][:10]
+            print(
+                f"  {url:<60} {data['count']:>6}  "
+                f"{tfidf:>8}  {positions_preview}"
+            )
+        print()
+
     def _phrase_bonus(self, terms, url):
         """Return PHRASE_WEIGHT * (number of exact-phrase matches).
 

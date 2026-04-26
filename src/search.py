@@ -1,24 +1,40 @@
-"""Query-time search over an Indexer."""
+"""Query-time search over an :class:`Indexer`.
+
+Implements:
+
+* ``find(query)`` — multi-word implicit-AND search ranked by TF-IDF,
+  with an exact-phrase bonus when the terms appear in sequence.
+* ``print_index(word)`` — pretty-prints the inverted-index entry for
+  a single word (count, TF-IDF, positions).
+* ``suggest(word)`` — prefix-based "did you mean" candidates (fuzzy
+  matching arrives in a later commit).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Tuple
+
+if TYPE_CHECKING:
+    from indexer import Indexer
 
 
 class SearchEngine:
-    """Wraps an Indexer and answers user queries."""
+    """Wraps an :class:`Indexer` and answers user queries."""
 
     # Multiplicative weight applied to each contiguous-phrase match.
-    PHRASE_WEIGHT = 2.0
+    PHRASE_WEIGHT: float = 2.0
 
     # Maximum number of suggestions returned by ``suggest``.
-    MAX_SUGGESTIONS = 5
+    MAX_SUGGESTIONS: int = 5
 
-    def __init__(self, indexer):
-        self.indexer = indexer
+    def __init__(self, indexer: "Indexer") -> None:
+        self.indexer: "Indexer" = indexer
 
-    def find(self, query):
-        """Return [(url, score), ...] for documents matching query.
+    def find(self, query: str | None) -> List[Tuple[str, float]]:
+        """Return ``[(url, score), ...]`` ranked best-first.
 
-        Multi-word queries are implicitly AND — all terms must appear.
-        Adjacent occurrences get a phrase bonus on top of the TF-IDF
-        sum, so an exact phrase outranks "two terms anywhere".
+        Multi-word queries are implicitly AND; adjacent occurrences
+        get a phrase bonus on top of the TF-IDF sum.
         """
         if not query or not query.strip():
             return []
@@ -35,7 +51,7 @@ class SearchEngine:
         if not match:
             return []
 
-        results = []
+        results: List[Tuple[str, float]] = []
         for url in match:
             score = sum(
                 self.indexer.get_tfidf(term, url) for term in terms
@@ -45,11 +61,8 @@ class SearchEngine:
             results.append((url, round(score, 4)))
         return sorted(results, key=lambda x: x[1], reverse=True)
 
-    def suggest(self, partial_word):
-        """Return up to MAX_SUGGESTIONS prefix-match candidates.
-
-        Useful when the user typed a partial word — ``go`` → ``good``.
-        """
+    def suggest(self, partial_word: str | None) -> List[str]:
+        """Return up to ``MAX_SUGGESTIONS`` prefix-match candidates."""
         if not partial_word:
             return []
         partial = partial_word.lower()
@@ -58,7 +71,7 @@ class SearchEngine:
         ]
         return matches[:self.MAX_SUGGESTIONS]
 
-    def print_index(self, word):
+    def print_index(self, word: str) -> None:
         """Pretty-print the inverted-index entry for ``word``."""
         word = word.lower().strip()
         if not word:
@@ -88,14 +101,8 @@ class SearchEngine:
             )
         print()
 
-    def _phrase_bonus(self, terms, url):
-        """Return PHRASE_WEIGHT * (number of exact-phrase matches).
-
-        Position-set arithmetic: the phrase ``terms`` occurs starting
-        at position p iff p ∈ positions(terms[0]) and p+i ∈ positions(
-        terms[i]) for every later term. Implemented as repeated
-        intersection of position sets, each shifted left by i.
-        """
+    def _phrase_bonus(self, terms: List[str], url: str) -> float:
+        """Return PHRASE_WEIGHT * (number of exact-phrase matches)."""
         try:
             base_positions = set(
                 self.indexer.index[terms[0]][url]['positions'])

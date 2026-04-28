@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
 
@@ -41,6 +41,9 @@ class Indexer:
         self.index: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.doc_count: int = 0
         self.doc_lengths: Dict[str, int] = {}
+        # Cached average document length used by BM25; invalidated
+        # whenever a new document is indexed or the index is reloaded.
+        self._avgdl_cache: Optional[float] = None
 
     def _tokenise(self, text: str) -> List[str]:
         """Lowercase text and return all ASCII-letter runs."""
@@ -59,6 +62,7 @@ class Indexer:
         words = self._tokenise(text)
         self.doc_count += 1
         self.doc_lengths[url] = len(words)
+        self._avgdl_cache = None
         for position, word in enumerate(words):
             if word not in self.index:
                 self.index[word] = {}
@@ -72,6 +76,19 @@ class Indexer:
         for url, html in pages.items():
             print(f"Indexing: {url}")
             self.index_page(url, html)
+
+    @property
+    def avgdl(self) -> float:
+        """Average document length across the collection."""
+        if self._avgdl_cache is None:
+            if not self.doc_lengths:
+                self._avgdl_cache = 0.0
+            else:
+                self._avgdl_cache = (
+                    sum(self.doc_lengths.values())
+                    / len(self.doc_lengths)
+                )
+        return self._avgdl_cache
 
     def get_tfidf(self, word: str, url: str) -> float:
         """Return TF-IDF for ``word`` in document ``url``.
@@ -107,9 +124,7 @@ class Indexer:
             return 0.0
         f = self.index[word][url]['count']
         dl = self.doc_lengths.get(url, 0)
-        if not self.doc_lengths:
-            return 0.0
-        avgdl = sum(self.doc_lengths.values()) / len(self.doc_lengths)
+        avgdl = self.avgdl
         if avgdl == 0:
             return 0.0
         df = len(self.index[word])
@@ -151,4 +166,5 @@ class Indexer:
         self.index = data['index']
         self.doc_count = data['doc_count']
         self.doc_lengths = data['doc_lengths']
+        self._avgdl_cache = None
         print(f"Index loaded from {filepath}")

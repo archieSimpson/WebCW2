@@ -87,6 +87,40 @@ class Indexer:
         idf = math.log((self.doc_count + 1) / (df + 1)) + 1
         return tf * idf
 
+    def get_bm25(
+        self,
+        word: str,
+        url: str,
+        k1: float = 1.2,
+        b: float = 0.75,
+    ) -> float:
+        """Return Okapi BM25 score for ``word`` in document ``url``.
+
+        BM25 saturates term frequency (so a 10× repeated word doesn't
+        score 10× higher) and length-normalises against avgdl.
+
+        IDF uses the Lucene-style smoothing
+        ``log(1 + (N - df + 0.5) / (df + 0.5))`` which is always
+        non-negative — even for terms that appear in every document.
+        """
+        if word not in self.index or url not in self.index[word]:
+            return 0.0
+        f = self.index[word][url]['count']
+        dl = self.doc_lengths.get(url, 0)
+        if not self.doc_lengths:
+            return 0.0
+        avgdl = sum(self.doc_lengths.values()) / len(self.doc_lengths)
+        if avgdl == 0:
+            return 0.0
+        df = len(self.index[word])
+        idf = math.log(
+            1 + (self.doc_count - df + 0.5) / (df + 0.5)
+        )
+        norm = (f * (k1 + 1)) / (
+            f + k1 * (1 - b + b * dl / avgdl)
+        )
+        return idf * norm
+
     def save(self, filepath: str) -> None:
         """Serialise the index to ``filepath`` as JSON."""
         data = {

@@ -54,7 +54,7 @@ class SearchEngine:
         results: List[Tuple[str, float]] = []
         for url in match:
             score = sum(
-                self.indexer.get_tfidf(term, url) for term in terms
+                self.indexer.get_bm25(term, url) for term in terms
             )
             if len(terms) > 1:
                 score += self._phrase_bonus(terms, url)
@@ -86,18 +86,19 @@ class SearchEngine:
               f"({len(entries)} document(s)):")
         print(
             f"\n  {'URL':<60} {'Count':>6}  {'TF-IDF':>8}  "
-            f"Positions (first 10)"
+            f"{'BM25':>8}  Positions (first 10)"
         )
-        print(f"  {'-' * 100}")
+        print(f"  {'-' * 110}")
         for url, data in sorted(
                 entries.items(),
                 key=lambda x: x[1]['count'],
                 reverse=True):
             tfidf = round(self.indexer.get_tfidf(word, url), 4)
+            bm25 = round(self.indexer.get_bm25(word, url), 4)
             positions_preview = data['positions'][:10]
             print(
                 f"  {url:<60} {data['count']:>6}  "
-                f"{tfidf:>8}  {positions_preview}"
+                f"{tfidf:>8}  {bm25:>8}  {positions_preview}"
             )
         print()
 

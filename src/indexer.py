@@ -138,6 +138,46 @@ class Indexer:
         )
         return idf * norm
 
+    def get_snippet(
+        self,
+        url: str,
+        terms: List[str],
+        window: int = 8,
+    ) -> str:
+        """Return a highlighted excerpt around the first matching term.
+
+        ``window`` tokens are shown either side of the first match.
+        Matched terms are wrapped in square brackets and uppercased so
+        they're visible in any terminal (no ANSI dependency).
+        """
+        tokens = self.doc_tokens.get(url)
+        if not tokens:
+            return ""
+
+        terms_lower = {t.lower() for t in terms}
+        best_pos: Optional[int] = None
+        for term in terms_lower:
+            postings = self.index.get(term, {}).get(url)
+            if postings and postings['positions']:
+                p = postings['positions'][0]
+                if best_pos is None or p < best_pos:
+                    best_pos = p
+        if best_pos is None:
+            return ""
+
+        start = max(0, best_pos - window)
+        end = min(len(tokens), best_pos + window + 1)
+        rendered: List[str] = []
+        for i in range(start, end):
+            tok = tokens[i]
+            if tok in terms_lower:
+                rendered.append(f"[{tok.upper()}]")
+            else:
+                rendered.append(tok)
+        prefix = "..." if start > 0 else ""
+        suffix = "..." if end < len(tokens) else ""
+        return prefix + " ".join(rendered) + suffix
+
     def save(self, filepath: str) -> None:
         """Serialise the index to ``filepath`` as JSON."""
         data = {

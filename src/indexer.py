@@ -41,6 +41,7 @@ class Indexer:
         self.index: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self.doc_count: int = 0
         self.doc_lengths: Dict[str, int] = {}
+        self.doc_tokens: Dict[str, List[str]] = {}
         # Cached average document length used by BM25; invalidated
         # whenever a new document is indexed or the index is reloaded.
         self._avgdl_cache: Optional[float] = None
@@ -57,11 +58,12 @@ class Indexer:
         return soup.get_text(separator=' ')
 
     def index_page(self, url: str, html: str) -> None:
-        """Index a single page — counts, positions, and length."""
+        """Index a single page — counts, positions, length, tokens."""
         text = self._extract_text(html)
         words = self._tokenise(text)
         self.doc_count += 1
         self.doc_lengths[url] = len(words)
+        self.doc_tokens[url] = words
         self._avgdl_cache = None
         for position, word in enumerate(words):
             if word not in self.index:

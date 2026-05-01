@@ -23,7 +23,9 @@ from bs4 import BeautifulSoup
 
 # JSON schema version. Bump when the on-disk format changes so that
 # load() can reject incompatible files instead of silently mis-parsing.
-INDEX_SCHEMA_VERSION = 1
+#   v1: index, doc_count, doc_lengths
+#   v2: + doc_tokens (for snippet generation)
+INDEX_SCHEMA_VERSION = 2
 
 
 class Indexer:
@@ -185,6 +187,7 @@ class Indexer:
             'index': self.index,
             'doc_count': self.doc_count,
             'doc_lengths': self.doc_lengths,
+            'doc_tokens': self.doc_tokens,
         }
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2)
@@ -208,5 +211,6 @@ class Indexer:
         self.index = data['index']
         self.doc_count = data['doc_count']
         self.doc_lengths = data['doc_lengths']
+        self.doc_tokens = data.get('doc_tokens', {})
         self._avgdl_cache = None
         print(f"Index loaded from {filepath}")

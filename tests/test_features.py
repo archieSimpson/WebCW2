@@ -101,6 +101,84 @@ class TestBM25:
         assert self.indexer.avgdl == 0.0
 
 
+# ---------------------------------------------------------------------
+# Snippets
+# ---------------------------------------------------------------------
+
+
+class TestSnippets:
+
+    def test_snippet_contains_match_and_context(self):
+        idx = Indexer()
+        idx.index_page(
+            "http://a.com",
+            "<p>the quick brown fox jumps over the lazy dog "
+            "while the cat watches from afar</p>",
+        )
+        snippet = idx.get_snippet("http://a.com", ["fox"])
+        assert "[FOX]" in snippet
+
+    def test_snippet_highlights_terms_uppercase(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>good friends together</p>")
+        snippet = idx.get_snippet(
+            "http://a.com", ["good", "friends"]
+        )
+        assert "[GOOD]" in snippet and "[FRIENDS]" in snippet
+
+    def test_snippet_empty_for_unknown_url(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>hello</p>")
+        assert idx.get_snippet("http://other.com", ["hello"]) == ""
+
+    def test_snippet_empty_for_no_matching_term(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>hello world</p>")
+        assert idx.get_snippet("http://a.com", ["banana"]) == ""
+
+    def test_snippet_empty_when_doc_tokens_missing(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>hello world</p>")
+        # Simulate a v1 file load.
+        idx.doc_tokens = {}
+        assert idx.get_snippet("http://a.com", ["hello"]) == ""
+
+    def test_snippet_window_truncates_with_ellipsis(self):
+        idx = Indexer()
+        idx.index_page(
+            "http://a.com",
+            "<p>" + " ".join(["word"] * 30) + " target "
+            + " ".join(["word"] * 30) + "</p>",
+        )
+        snippet = idx.get_snippet(
+            "http://a.com", ["target"], window=3
+        )
+        assert "..." in snippet
+        assert "[TARGET]" in snippet
+
+    def test_snippet_no_leading_ellipsis_when_match_at_start(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>target one two three</p>")
+        snippet = idx.get_snippet(
+            "http://a.com", ["target"], window=10
+        )
+        assert not snippet.startswith("...")
+
+    def test_snippet_round_trips_through_save_load(self):
+        idx = Indexer()
+        idx.index_page("http://a.com", "<p>one two target four</p>")
+        with tempfile.NamedTemporaryFile(
+                suffix='.json', delete=False) as f:
+            path = f.name
+        try:
+            idx.save(path)
+            new = Indexer()
+            new.load(path)
+        finally:
+            os.unlink(path)
+        assert "[TARGET]" in new.get_snippet("http://a.com", ["target"])
+
+
 class TestBM25Ranking:
     """Sanity-check that BM25 produces sensible end-to-end rankings."""
 

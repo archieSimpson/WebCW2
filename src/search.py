@@ -78,33 +78,72 @@ class SearchEngine:
     def find(self, query: str | None) -> List[Tuple[str, float]]:
         """Return ``[(url, score), ...]`` ranked best-first.
 
-        Multi-word queries are implicitly AND; adjacent occurrences
-        get a phrase bonus on top of the TF-IDF sum.
+        Query syntax:
+            * Default: implicit ``AND`` — ``find good friends`` →
+              documents containing both terms.
+            * ``OR`` (uppercase): ``find good OR friends`` → documents
+              containing either term.
+            * ``NOT`` (uppercase): ``find good NOT enemy`` →
+              documents containing ``good`` but not ``enemy``.
+            * Mixed: ``find good OR life NOT enemy`` is parsed as
+              ``(good) OR (life AND NOT enemy)``.
+
+        Scoring is BM25 over the *positive* terms in whichever
+        disjunctive clause matched, plus a phrase bonus when adjacent
+        terms appear in sequence.
+
+        Edge cases: ``None`` / empty / whitespace-only query → ``[]``.
         """
         if not query or not query.strip():
             return []
 
-        terms = [t.lower() for t in query.split()]
+        disjuncts = self._parse_query(query)
+        if not disjuncts:
+            return []
 
-        match = None
-        for term in terms:
-            if term not in self.indexer.index:
-                return []
-            postings = set(self.indexer.index[term].keys())
-            match = postings if match is None else match & postings
+        # Evaluate each disjunct, union the matches, remember which
+        # disjunct produced each doc (for term-aware scoring).
+        matched: dict[str, List[str]] = {}
+        for positives, negatives in disjuncts:
+            if not positives:
+                # ``NOT enemy`` on its own has no positive evidence —
+                # ignore (otherwise we'd return the entire corpus).
+                continue
+            urls = self._evaluate_clause(positives, negatives)
+            for url in urls:
+                if url not in matched:
+                    matched[url] = positives
 
-        if not match:
+        if not matched:
             return []
 
         results: List[Tuple[str, float]] = []
-        for url in match:
+        for url, positives in matched.items():
             score = sum(
-                self.indexer.get_bm25(term, url) for term in terms
+                self.indexer.get_bm25(term, url) for term in positives
             )
-            if len(terms) > 1:
-                score += self._phrase_bonus(terms, url)
+            if len(positives) > 1:
+                score += self._phrase_bonus(positives, url)
             results.append((url, round(score, 4)))
+
         return sorted(results, key=lambda x: x[1], reverse=True)
+
+    def _evaluate_clause(
+        self, positives: List[str], negatives: List[str]
+    ) -> Set[str]:
+        """Intersect positive postings, then subtract negative postings."""
+        match: Set[str] | None = None
+        for term in positives:
+            if term not in self.indexer.index:
+                return set()
+            postings = set(self.indexer.index[term].keys())
+            match = postings if match is None else match & postings
+        if match is None:
+            return set()
+        for term in negatives:
+            if term in self.indexer.index:
+                match -= set(self.indexer.index[term].keys())
+        return match
 
     def suggest(self, partial_word: str | None) -> List[str]:
         """Return up to ``MAX_SUGGESTIONS`` prefix-match candidates."""

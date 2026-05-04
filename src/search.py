@@ -12,7 +12,7 @@ Implements:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Set, Tuple
 
 if TYPE_CHECKING:
     from indexer import Indexer
@@ -27,8 +27,53 @@ class SearchEngine:
     # Maximum number of suggestions returned by ``suggest``.
     MAX_SUGGESTIONS: int = 5
 
+    # Reserved Boolean operators (uppercase only — case-sensitive so
+    # they don't clash with regular search terms).
+    _OP_OR = "OR"
+    _OP_NOT = "NOT"
+    _OP_AND = "AND"
+
     def __init__(self, indexer: "Indexer") -> None:
         self.indexer: "Indexer" = indexer
+
+    def _parse_query(
+        self, query: str
+    ) -> List[Tuple[List[str], List[str]]]:
+        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
+
+        Adjacent clauses are joined by an implicit ``AND``; ``OR``
+        introduces a new clause; ``NOT`` flips the polarity of the
+        next term. Operators are uppercase only so regular lowercase
+        words like ``or`` aren't accidentally interpreted.
+        """
+        tokens = query.split()
+        clauses: List[Tuple[List[str], List[str]]] = []
+        positives: List[str] = []
+        negatives: List[str] = []
+        next_negative = False
+
+        for tok in tokens:
+            if tok == self._OP_OR:
+                if positives or negatives:
+                    clauses.append((positives, negatives))
+                positives, negatives = [], []
+                next_negative = False
+            elif tok == self._OP_NOT:
+                next_negative = True
+            elif tok == self._OP_AND:
+                # Explicit AND is a no-op (default behaviour).
+                next_negative = False
+            else:
+                term = tok.lower()
+                if next_negative:
+                    negatives.append(term)
+                    next_negative = False
+                else:
+                    positives.append(term)
+
+        if positives or negatives:
+            clauses.append((positives, negatives))
+        return clauses
 
     def find(self, query: str | None) -> List[Tuple[str, float]]:
         """Return ``[(url, score), ...]`` ranked best-first.

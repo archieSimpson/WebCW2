@@ -179,6 +179,87 @@ class TestSnippets:
         assert "[TARGET]" in new.get_snippet("http://a.com", ["target"])
 
 
+# ---------------------------------------------------------------------
+# Boolean query parser + end-to-end search
+# ---------------------------------------------------------------------
+
+
+class TestBooleanParser:
+
+    def setup_method(self):
+        self.engine, _ = make_engine(
+            ("http://1.com",
+             "<p>good life lived well</p>"),
+            ("http://2.com",
+             "<p>good friends together always</p>"),
+            ("http://3.com",
+             "<p>life is the enemy of routine</p>"),
+            ("http://4.com",
+             "<p>good enemy lurks within</p>"),
+        )
+
+    def test_implicit_and_unchanged(self):
+        # Default conjunctive behaviour preserved.
+        urls = {u for u, _ in self.engine.find("good life")}
+        assert urls == {"http://1.com"}
+
+    def test_or_unions_postings(self):
+        urls = {u for u, _ in self.engine.find("life OR friends")}
+        # life: 1, 3 ; friends: 2 → union {1, 2, 3}
+        assert urls == {"http://1.com", "http://2.com", "http://3.com"}
+
+    def test_not_excludes_postings(self):
+        urls = {u for u, _ in self.engine.find("good NOT enemy")}
+        # good: {1, 2, 4}; minus enemy: {4} → {1, 2}
+        assert urls == {"http://1.com", "http://2.com"}
+
+    def test_explicit_and_keyword_no_op(self):
+        # Explicit AND should behave identically to implicit.
+        a = {u for u, _ in self.engine.find("good life")}
+        b = {u for u, _ in self.engine.find("good AND life")}
+        assert a == b
+
+    def test_or_and_not_combined(self):
+        # (good NOT enemy) OR (life)
+        urls = {u for u, _ in
+                self.engine.find("good NOT enemy OR life")}
+        # left clause: {1, 2}; right clause: {1, 3} → {1, 2, 3}
+        assert urls == {"http://1.com", "http://2.com", "http://3.com"}
+
+    def test_not_only_clause_ignored(self):
+        # 'NOT enemy' alone has no positive evidence — must not return
+        # the entire corpus.
+        results = self.engine.find("NOT enemy")
+        assert results == []
+
+    def test_or_with_unknown_term_still_returns_other_branch(self):
+        urls = {u for u, _ in
+                self.engine.find("xyznotaword OR friends")}
+        assert urls == {"http://2.com"}
+
+    def test_lowercase_or_treated_as_term(self):
+        # Operators are uppercase only — lowercase 'or' is a regular
+        # term, so this becomes an implicit AND of three missing terms.
+        results = self.engine.find("good or life")
+        # 'or' isn't in the index, so the AND fails → empty.
+        assert results == []
+
+    def test_parse_query_single_term(self):
+        clauses = self.engine._parse_query("hello")
+        assert clauses == [(["hello"], [])]
+
+    def test_parse_query_or_only(self):
+        clauses = self.engine._parse_query("a OR b")
+        assert clauses == [(["a"], []), (["b"], [])]
+
+    def test_parse_query_not_attaches_to_next_term(self):
+        clauses = self.engine._parse_query("a NOT b c")
+        assert clauses == [(["a", "c"], ["b"])]
+
+    def test_parse_query_empty(self):
+        assert self.engine._parse_query("") == []
+
+
 class TestBM25Ranking:
     """Sanity-check that BM25 produces sensible end-to-end rankings."""
 

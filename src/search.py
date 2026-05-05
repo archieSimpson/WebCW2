@@ -2,17 +2,18 @@
 
 Implements:
 
-* ``find(query)`` — multi-word implicit-AND search ranked by TF-IDF,
-  with an exact-phrase bonus when the terms appear in sequence.
-* ``print_index(word)`` — pretty-prints the inverted-index entry for
-  a single word (count, TF-IDF, positions).
+* ``find(query)`` — Boolean-aware multi-word search ranked by Okapi
+  BM25, with an exact-phrase bonus when the terms appear in sequence.
+  Supports ``AND`` (default), ``OR`` and ``NOT`` operators.
+* ``print_index(word)`` — pretty-prints the inverted-index entry for a
+  single word (counts, TF-IDF, BM25 and a sample of positions).
 * ``suggest(word)`` — prefix-based "did you mean" candidates (fuzzy
   matching arrives in a later commit).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Set, Tuple
 
 if TYPE_CHECKING:
     from indexer import Indexer
@@ -22,44 +23,135 @@ class SearchEngine:
     """Wraps an :class:`Indexer` and answers user queries."""
 
     # Multiplicative weight applied to each contiguous-phrase match.
+    # 2.0 is conservative — high enough that an exact phrase outranks
+    # "two terms anywhere in the document" but low enough that a strong
+    # BM25 signal can still dominate.
     PHRASE_WEIGHT: float = 2.0
 
     # Maximum number of suggestions returned by ``suggest``.
     MAX_SUGGESTIONS: int = 5
 
+    # Reserved Boolean operators (uppercase only — case-sensitive so
+    # they don't clash with regular search terms).
+    _OP_OR = "OR"
+    _OP_NOT = "NOT"
+    _OP_AND = "AND"
+
     def __init__(self, indexer: "Indexer") -> None:
         self.indexer: "Indexer" = indexer
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def _parse_query(
+        self, query: str
+    ) -> List[Tuple[List[str], List[str]]]:
+        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
+
+        Adjacent clauses are joined by an implicit ``AND``; ``OR``
+        introduces a new clause; ``NOT`` flips the polarity of the
+        next term. Operators are uppercase only so regular lowercase
+        words like ``or`` aren't accidentally interpreted.
+        """
+        tokens = query.split()
+        clauses: List[Tuple[List[str], List[str]]] = []
+        positives: List[str] = []
+        negatives: List[str] = []
+        next_negative = False
+
+        for tok in tokens:
+            if tok == self._OP_OR:
+                if positives or negatives:
+                    clauses.append((positives, negatives))
+                positives, negatives = [], []
+                next_negative = False
+            elif tok == self._OP_NOT:
+                next_negative = True
+            elif tok == self._OP_AND:
+                # Explicit AND is a no-op (default behaviour).
+                next_negative = False
+            else:
+                term = tok.lower()
+                if next_negative:
+                    negatives.append(term)
+                    next_negative = False
+                else:
+                    positives.append(term)
+
+        if positives or negatives:
+            clauses.append((positives, negatives))
+        return clauses
 
     def find(self, query: str | None) -> List[Tuple[str, float]]:
         """Return ``[(url, score), ...]`` ranked best-first.
 
-        Multi-word queries are implicitly AND; adjacent occurrences
-        get a phrase bonus on top of the TF-IDF sum.
+        Query syntax:
+            * Default: implicit ``AND`` — ``find good friends`` →
+              documents containing both terms.
+            * ``OR`` (uppercase): ``find good OR friends`` → documents
+              containing either term.
+            * ``NOT`` (uppercase): ``find good NOT enemy`` →
+              documents containing ``good`` but not ``enemy``.
+            * Mixed: ``find good OR life NOT enemy`` is parsed as
+              ``(good) OR (life AND NOT enemy)``.
+
+        Scoring is BM25 over the *positive* terms in whichever
+        disjunctive clause matched, plus a phrase bonus when adjacent
+        terms appear in sequence.
+
+        Edge cases: ``None`` / empty / whitespace-only query → ``[]``.
         """
         if not query or not query.strip():
             return []
 
-        terms = [t.lower() for t in query.split()]
+        disjuncts = self._parse_query(query)
+        if not disjuncts:
+            return []
 
-        match = None
-        for term in terms:
-            if term not in self.indexer.index:
-                return []
-            postings = set(self.indexer.index[term].keys())
-            match = postings if match is None else match & postings
+        # Evaluate each disjunct, union the matches, remember which
+        # disjunct produced each doc (for term-aware scoring).
+        matched: dict[str, List[str]] = {}
+        for positives, negatives in disjuncts:
+            if not positives:
+                # ``NOT enemy`` on its own has no positive evidence —
+                # ignore (otherwise we'd return the entire corpus).
+                continue
+            urls = self._evaluate_clause(positives, negatives)
+            for url in urls:
+                if url not in matched:
+                    matched[url] = positives
 
-        if not match:
+        if not matched:
             return []
 
         results: List[Tuple[str, float]] = []
-        for url in match:
+        for url, positives in matched.items():
             score = sum(
-                self.indexer.get_bm25(term, url) for term in terms
+                self.indexer.get_bm25(term, url) for term in positives
             )
-            if len(terms) > 1:
-                score += self._phrase_bonus(terms, url)
+            if len(positives) > 1:
+                score += self._phrase_bonus(positives, url)
             results.append((url, round(score, 4)))
+
         return sorted(results, key=lambda x: x[1], reverse=True)
+
+    def _evaluate_clause(
+        self, positives: List[str], negatives: List[str]
+    ) -> Set[str]:
+        """Intersect positive postings, then subtract negative postings."""
+        match: Set[str] | None = None
+        for term in positives:
+            if term not in self.indexer.index:
+                return set()
+            postings = set(self.indexer.index[term].keys())
+            match = postings if match is None else match & postings
+        if match is None:
+            return set()
+        for term in negatives:
+            if term in self.indexer.index:
+                match -= set(self.indexer.index[term].keys())
+        return match
 
     def suggest(self, partial_word: str | None) -> List[str]:
         """Return up to ``MAX_SUGGESTIONS`` prefix-match candidates."""

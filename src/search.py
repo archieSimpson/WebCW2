@@ -2,10 +2,11 @@
 
 Implements:
 
-* ``find(query)`` — multi-word implicit-AND search ranked by TF-IDF,
-  with an exact-phrase bonus when the terms appear in sequence.
-* ``print_index(word)`` — pretty-prints the inverted-index entry for
-  a single word (count, TF-IDF, positions).
+* ``find(query)`` — Boolean-aware multi-word search ranked by Okapi
+  BM25, with an exact-phrase bonus when the terms appear in sequence.
+  Supports ``AND`` (default), ``OR`` and ``NOT`` operators.
+* ``print_index(word)`` — pretty-prints the inverted-index entry for a
+  single word (counts, TF-IDF, BM25 and a sample of positions).
 * ``suggest(word)`` — prefix-based "did you mean" candidates (fuzzy
   matching arrives in a later commit).
 """
@@ -22,6 +23,9 @@ class SearchEngine:
     """Wraps an :class:`Indexer` and answers user queries."""
 
     # Multiplicative weight applied to each contiguous-phrase match.
+    # 2.0 is conservative — high enough that an exact phrase outranks
+    # "two terms anywhere in the document" but low enough that a strong
+    # BM25 signal can still dominate.
     PHRASE_WEIGHT: float = 2.0
 
     # Maximum number of suggestions returned by ``suggest``.
@@ -35,6 +39,10 @@ class SearchEngine:
 
     def __init__(self, indexer: "Indexer") -> None:
         self.indexer: "Indexer" = indexer
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def _parse_query(
         self, query: str

@@ -194,6 +194,44 @@ class SearchEngine:
             )
         print()
 
+    @staticmethod
+    def _edit_distance(a: str, b: str, max_dist: int | None = None) -> int:
+        """Levenshtein distance between ``a`` and ``b``.
+
+        Uses the standard ``O(|a|·|b|)`` two-row DP. When ``max_dist``
+        is provided, an early bail-out short-circuits to a value just
+        above ``max_dist`` whenever the lengths differ by more than
+        that — preserves correctness for the threshold check used by
+        :meth:`suggest` and saves work on the common case.
+        """
+        if a == b:
+            return 0
+        la, lb = len(a), len(b)
+        if max_dist is not None and abs(la - lb) > max_dist:
+            return max_dist + 1
+        if la == 0:
+            return lb
+        if lb == 0:
+            return la
+
+        prev = list(range(lb + 1))
+        for i in range(1, la + 1):
+            curr = [i] + [0] * lb
+            row_min = curr[0]
+            for j in range(1, lb + 1):
+                cost = 0 if a[i - 1] == b[j - 1] else 1
+                curr[j] = min(
+                    curr[j - 1] + 1,
+                    prev[j] + 1,
+                    prev[j - 1] + cost,
+                )
+                if curr[j] < row_min:
+                    row_min = curr[j]
+            if max_dist is not None and row_min > max_dist:
+                return max_dist + 1
+            prev = curr
+        return prev[lb]
+
     def _phrase_bonus(self, terms: List[str], url: str) -> float:
         """Return PHRASE_WEIGHT * (number of exact-phrase matches)."""
         try:

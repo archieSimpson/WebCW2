@@ -154,14 +154,53 @@ class SearchEngine:
         return match
 
     def suggest(self, partial_word: str | None) -> List[str]:
-        """Return up to ``MAX_SUGGESTIONS`` prefix-match candidates."""
+        """Return up to :attr:`MAX_SUGGESTIONS` candidate corrections.
+
+        Combines two strategies:
+
+        1. **Prefix matching** — useful when the user typed a partial
+           word (``go`` → ``good``).
+        2. **Levenshtein edit distance** — useful when the user
+           typo'd a real word (``gud`` → ``good``). The threshold
+           scales with query length (one edit per ~3 characters), so
+           short queries don't match too liberally.
+
+        Prefix matches always come first, then fuzzy matches sorted by
+        ascending distance.
+        """
         if not partial_word:
             return []
         partial = partial_word.lower()
-        matches = [
+
+        prefix_matches = [
             w for w in self.indexer.index if w.startswith(partial)
         ]
-        return matches[:self.MAX_SUGGESTIONS]
+        if len(prefix_matches) >= self.MAX_SUGGESTIONS:
+            return prefix_matches[:self.MAX_SUGGESTIONS]
+
+        # Threshold tuned to catch realistic typos:
+        #   * len ≤ 2  → only allow exact prefix matches (1 edit on a
+        #     2-char query is far too liberal — half the dictionary).
+        #   * len 3–5  → allow up to 2 edits (catches "gud" → "good").
+        #   * len ≥ 6  → scale linearly so longer words tolerate more
+        #     errors while still requiring a strong overlap.
+        if len(partial) <= 2:
+            threshold = 1
+        elif len(partial) <= 5:
+            threshold = 2
+        else:
+            threshold = max(2, len(partial) // 3)
+        seen = set(prefix_matches)
+        fuzzy: List[Tuple[int, str]] = []
+        for w in self.indexer.index:
+            if w in seen:
+                continue
+            d = self._edit_distance(partial, w, threshold)
+            if d <= threshold:
+                fuzzy.append((d, w))
+        fuzzy.sort()
+        combined = prefix_matches + [w for _, w in fuzzy]
+        return combined[:self.MAX_SUGGESTIONS]
 
     def print_index(self, word: str) -> None:
         """Pretty-print the inverted-index entry for ``word``."""

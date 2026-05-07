@@ -180,6 +180,92 @@ class TestSnippets:
 
 
 # ---------------------------------------------------------------------
+# Edit distance + enhanced suggest
+# ---------------------------------------------------------------------
+
+
+class TestEditDistance:
+
+    def test_distance_zero_for_identical(self):
+        assert SearchEngine._edit_distance("good", "good") == 0
+
+    def test_distance_one_substitution(self):
+        assert SearchEngine._edit_distance("good", "gold") == 1
+
+    def test_distance_one_insertion(self):
+        assert SearchEngine._edit_distance("god", "good") == 1
+
+    def test_distance_one_deletion(self):
+        assert SearchEngine._edit_distance("good", "god") == 1
+
+    def test_distance_three_completely_different(self):
+        assert SearchEngine._edit_distance("abc", "xyz") == 3
+
+    def test_distance_empty_strings(self):
+        assert SearchEngine._edit_distance("", "") == 0
+        assert SearchEngine._edit_distance("", "abc") == 3
+        assert SearchEngine._edit_distance("abc", "") == 3
+
+    def test_distance_max_dist_short_circuits_on_length(self):
+        # Len diff is 4, max_dist=1 should return >1 quickly.
+        d = SearchEngine._edit_distance("a", "abcde", max_dist=1)
+        assert d > 1
+
+    def test_distance_max_dist_short_circuits_in_dp(self):
+        # Long words with many edits, max_dist=1 should bail out.
+        d = SearchEngine._edit_distance(
+            "abcdefgh", "zyxwvuts", max_dist=1
+        )
+        assert d > 1
+
+
+class TestFuzzySuggest:
+
+    def setup_method(self):
+        self.engine, _ = make_engine(
+            ("http://a.com",
+             "<p>good goodbye goodness great green grand</p>"),
+        )
+
+    def test_typo_correction(self):
+        # "gud" should map to "good" via edit distance even though
+        # there is no prefix overlap.
+        suggestions = self.engine.suggest("gud")
+        assert "good" in suggestions
+
+    def test_swap_correction(self):
+        # transposition is two edits — gets "good" only if threshold
+        # allows it. For len 4 threshold = 1, so we use a same-length
+        # near-match.
+        suggestions = self.engine.suggest("gond")  # 1 edit from "good"
+        assert "good" in suggestions
+
+    def test_prefix_still_works(self):
+        suggestions = self.engine.suggest("go")
+        assert "good" in suggestions
+
+    def test_zero_edit_query_returns_self(self):
+        # Already in the index.
+        suggestions = self.engine.suggest("good")
+        assert "good" in suggestions
+
+    def test_completely_unrelated_returns_empty(self):
+        # 'qqqq' is far from every indexed word.
+        assert self.engine.suggest("qqqq") == []
+
+    def test_prefix_saturates_short_circuits_fuzzy(self):
+        # When >= MAX_SUGGESTIONS prefix matches exist, fuzzy search
+        # should be skipped and only the prefix matches returned.
+        engine, _ = make_engine(
+            ("http://a.com",
+             "<p>good goodbye goodness goods goodly goodish</p>"),
+        )
+        suggestions = engine.suggest("good")
+        assert len(suggestions) == SearchEngine.MAX_SUGGESTIONS
+        assert all(s.startswith("good") for s in suggestions)
+
+
+# ---------------------------------------------------------------------
 # Boolean query parser + end-to-end search
 # ---------------------------------------------------------------------
 

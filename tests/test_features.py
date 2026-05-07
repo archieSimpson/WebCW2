@@ -1,4 +1,12 @@
-"""Tests for the BM25 ranker, the avgdl cache, and snippet generation."""
+"""Tests for the advanced features layered on top of the basic engine.
+
+Covers:
+
+* BM25 scoring (:meth:`Indexer.get_bm25` and the average-length cache)
+* Snippet generation (:meth:`Indexer.get_snippet`)
+* Levenshtein edit distance and the enhanced fuzzy suggest
+* Boolean query parser and end-to-end ``OR`` / ``NOT`` queries
+"""
 
 import os
 import tempfile

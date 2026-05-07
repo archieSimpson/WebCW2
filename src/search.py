@@ -7,8 +7,9 @@ Implements:
   Supports ``AND`` (default), ``OR`` and ``NOT`` operators.
 * ``print_index(word)`` — pretty-prints the inverted-index entry for a
   single word (counts, TF-IDF, BM25 and a sample of positions).
-* ``suggest(word)`` — prefix-based "did you mean" candidates (fuzzy
-  matching arrives in a later commit).
+* ``suggest(word)`` — "did you mean" candidates combining prefix
+  matching and Levenshtein edit distance, so both partial words
+  (``go`` → ``good``) and typos (``gud`` → ``good``) are corrected.
 """
 
 from __future__ import annotations

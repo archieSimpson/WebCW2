@@ -27,3 +27,52 @@ def run_build(indexer):
     print(f"Done. Indexed {len(pages)} pages, "
           f"{len(indexer.index)} unique words.")
     return engine
+
+
+def run_load(indexer):
+    """Restore the index from INDEX_FILE."""
+    if not os.path.exists(INDEX_FILE):
+        print("No index found. Run 'build' first.")
+        return None
+    indexer.load(INDEX_FILE)
+    engine = SearchEngine(indexer)
+    print(f"Index loaded: {indexer.doc_count} documents, "
+          f"{len(indexer.index)} unique words.")
+    return engine
+
+
+def run_print(engine, indexer, argument):
+    """Handle the print <word> shell command."""
+    if not argument:
+        print("Usage: print <word>")
+        return
+    if not indexer.index:
+        print("Index is empty. Run 'build' or 'load' first.")
+        return
+    engine.print_index(argument)
+
+
+def run_find(engine, indexer, argument):
+    """Handle the find <query> shell command."""
+    if not argument:
+        print("Usage: find <word> [word2 ...]")
+        return
+    if not indexer.index:
+        print("Index is empty. Run 'build' or 'load' first.")
+        return
+    results = engine.find(argument)
+    if not results:
+        print(f"No pages found for '{argument}'.")
+        first = argument.split()[0] if argument.split() else ""
+        if first:
+            suggestions = engine.suggest(first)
+            if suggestions:
+                print(f"Did you mean: {', '.join(suggestions)}?")
+        return
+
+    print(f"\nFound {len(results)} page(s) for '{argument}':")
+    print(f"  {'Score':>8}  URL")
+    print(f"  {'-' * 70}")
+    for url, score in results:
+        print(f"  {score:>8.4f}  {url}")
+    print()

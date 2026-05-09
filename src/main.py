@@ -76,3 +76,51 @@ def run_find(engine, indexer, argument):
     for url, score in results:
         print(f"  {score:>8.4f}  {url}")
     print()
+
+
+def main():
+    """Run the read-eval-print loop until the user exits."""
+    indexer = Indexer()
+    engine = SearchEngine(indexer)
+
+    print("=" * 60)
+    print("  COMP3011 Search Engine")
+    print("  Commands: build | load | print <word> | find <query>")
+    print("  Type 'quit' to exit")
+    print("=" * 60)
+    print()
+
+    while True:
+        try:
+            raw = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye.")
+            break
+
+        if not raw:
+            continue
+
+        parts = raw.split(maxsplit=1)
+        command = parts[0].lower()
+        argument = parts[1] if len(parts) > 1 else ""
+
+        if command in ("quit", "exit"):
+            print("Goodbye.")
+            break
+        elif command == "build":
+            engine = run_build(indexer)
+        elif command == "load":
+            result = run_load(indexer)
+            if result:
+                engine = result
+        elif command == "print":
+            run_print(engine, indexer, argument)
+        elif command == "find":
+            run_find(engine, indexer, argument)
+        else:
+            print(f"Unknown command: '{command}'.")
+            print("Try: build, load, print <word>, find <query>")
+
+
+if __name__ == "__main__":
+    main()

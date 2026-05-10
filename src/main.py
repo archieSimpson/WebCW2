@@ -1,7 +1,21 @@
-"""Interactive command-line shell for the COMP3011 search engine."""
+"""Interactive command-line shell for the COMP3011 search engine.
+
+Provides four commands as required by the assessment brief:
+
+* ``build`` — crawl the seed site, build an inverted index, persist it.
+* ``load``  — read a previously persisted index from disk.
+* ``print <word>`` — show the inverted-index entry for a single word.
+* ``find <query>`` — Boolean-aware search ranked by BM25 with an
+  exact-phrase bonus. Supports ``AND`` (default), ``OR`` and ``NOT``.
+
+Run with ``python src/main.py`` (or ``python -m src.main``).
+"""
+
+from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -9,13 +23,17 @@ from crawler import Crawler  # noqa: E402
 from indexer import Indexer  # noqa: E402
 from search import SearchEngine  # noqa: E402
 
-BASE_URL = "https://quotes.toscrape.com/"
-INDEX_FILE = os.path.join(
+BASE_URL: str = "https://quotes.toscrape.com/"
+INDEX_FILE: str = os.path.join(
     os.path.dirname(__file__), '..', 'data', 'index.json')
 
 
-def run_build(indexer):
-    """Crawl the target site, populate indexer, and persist to disk."""
+def run_build(indexer: Indexer) -> SearchEngine:
+    """Crawl the target site, populate ``indexer``, and persist to disk.
+
+    Returns a :class:`SearchEngine` bound to the freshly built index so
+    that subsequent ``find``/``print`` commands have something to query.
+    """
     print(f"Crawling {BASE_URL} ...")
     crawler = Crawler(BASE_URL, politeness_window=6)
     pages = crawler.crawl()
@@ -29,8 +47,12 @@ def run_build(indexer):
     return engine
 
 
-def run_load(indexer):
-    """Restore the index from INDEX_FILE."""
+def run_load(indexer: Indexer) -> Optional[SearchEngine]:
+    """Restore the index from :data:`INDEX_FILE`.
+
+    Returns ``None`` (and prints a hint) if no index file exists yet,
+    so the caller can decide whether to keep the stale engine.
+    """
     if not os.path.exists(INDEX_FILE):
         print("No index found. Run 'build' first.")
         return None
@@ -41,8 +63,10 @@ def run_load(indexer):
     return engine
 
 
-def run_print(engine, indexer, argument):
-    """Handle the print <word> shell command."""
+def run_print(
+    engine: SearchEngine, indexer: Indexer, argument: str
+) -> None:
+    """Handle the ``print <word>`` shell command."""
     if not argument:
         print("Usage: print <word>")
         return
@@ -52,10 +76,21 @@ def run_print(engine, indexer, argument):
     engine.print_index(argument)
 
 
-def run_find(engine, indexer, argument):
-    """Handle the find <query> shell command."""
+def _query_terms(query: str) -> list[str]:
+    """Return the non-operator terms used for snippet highlighting."""
+    return [
+        tok.lower() for tok in query.split()
+        if tok not in ("AND", "OR", "NOT")
+    ]
+
+
+def run_find(
+    engine: SearchEngine, indexer: Indexer, argument: str
+) -> None:
+    """Handle the ``find <query>`` shell command."""
     if not argument:
-        print("Usage: find <word> [word2 ...]")
+        print("Usage: find <word> [word2 ...]   "
+              "(AND/OR/NOT supported, uppercase)")
         return
     if not indexer.index:
         print("Index is empty. Run 'build' or 'load' first.")
@@ -63,22 +98,26 @@ def run_find(engine, indexer, argument):
     results = engine.find(argument)
     if not results:
         print(f"No pages found for '{argument}'.")
-        first = argument.split()[0] if argument.split() else ""
-        if first:
-            suggestions = engine.suggest(first)
+        terms = _query_terms(argument)
+        if terms:
+            suggestions = engine.suggest(terms[0])
             if suggestions:
                 print(f"Did you mean: {', '.join(suggestions)}?")
         return
 
+    terms = _query_terms(argument)
     print(f"\nFound {len(results)} page(s) for '{argument}':")
     print(f"  {'Score':>8}  URL")
     print(f"  {'-' * 70}")
     for url, score in results:
         print(f"  {score:>8.4f}  {url}")
+        snippet = indexer.get_snippet(url, terms)
+        if snippet:
+            print(f"            {snippet}")
     print()
 
 
-def main():
+def main() -> None:
     """Run the read-eval-print loop until the user exits."""
     indexer = Indexer()
     engine = SearchEngine(indexer)

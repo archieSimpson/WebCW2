@@ -86,7 +86,8 @@ def main():
     print("=" * 60)
     print("  COMP3011 Search Engine")
     print("  Commands: build | load | print <word> | find <query>")
-    print("  Type 'quit' to exit")
+    print("  Query operators: AND (default), OR, NOT (uppercase)")
+    print("  Type 'help' for more, 'quit' to exit")
     print("=" * 60)
     print()
 
@@ -117,6 +118,19 @@ def main():
             run_print(engine, indexer, argument)
         elif command == "find":
             run_find(engine, indexer, argument)
+        elif command in ("help", "?"):
+            print(
+                "Commands:\n"
+                "  build           Crawl the site and build the index.\n"
+                "  load            Load a previously saved index.\n"
+                "  print <word>    Show the inverted index for a word.\n"
+                "  find <query>    Search the index. Supports:\n"
+                "                    'find good friends'   (implicit AND)\n"
+                "                    'find good OR life'   (union)\n"
+                "                    'find good NOT enemy' (exclude)\n"
+                "                  Operators are uppercase only.\n"
+                "  quit            Exit the shell."
+            )
         else:
             print(f"Unknown command: '{command}'.")
             print("Try: build, load, print <word>, find <query>")

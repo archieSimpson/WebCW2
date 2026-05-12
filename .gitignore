@@ -3,4 +3,11 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 .DS_Store
+*.egg-info/
+.idea/
+.vscode/

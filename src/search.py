@@ -21,7 +21,11 @@ if TYPE_CHECKING:
 
 
 class SearchEngine:
-    """Wraps an :class:`Indexer` and answers user queries."""
+    """Wraps an :class:`Indexer` and answers user queries.
+
+    The engine itself is stateless apart from the indexer reference;
+    one instance can serve any number of concurrent queries.
+    """
 
     # Multiplicative weight applied to each contiguous-phrase match.
     # 2.0 is conservative — high enough that an exact phrase outranks
@@ -44,45 +48,6 @@ class SearchEngine:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def _parse_query(
-        self, query: str
-    ) -> List[Tuple[List[str], List[str]]]:
-        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
-
-        Adjacent clauses are joined by an implicit ``AND``; ``OR``
-        introduces a new clause; ``NOT`` flips the polarity of the
-        next term. Operators are uppercase only so regular lowercase
-        words like ``or`` aren't accidentally interpreted.
-        """
-        tokens = query.split()
-        clauses: List[Tuple[List[str], List[str]]] = []
-        positives: List[str] = []
-        negatives: List[str] = []
-        next_negative = False
-
-        for tok in tokens:
-            if tok == self._OP_OR:
-                if positives or negatives:
-                    clauses.append((positives, negatives))
-                positives, negatives = [], []
-                next_negative = False
-            elif tok == self._OP_NOT:
-                next_negative = True
-            elif tok == self._OP_AND:
-                # Explicit AND is a no-op (default behaviour).
-                next_negative = False
-            else:
-                term = tok.lower()
-                if next_negative:
-                    negatives.append(term)
-                    next_negative = False
-                else:
-                    positives.append(term)
-
-        if positives or negatives:
-            clauses.append((positives, negatives))
-        return clauses
 
     def find(self, query: str | None) -> List[Tuple[str, float]]:
         """Return ``[(url, score), ...]`` ranked best-first.
@@ -136,23 +101,6 @@ class SearchEngine:
             results.append((url, round(score, 4)))
 
         return sorted(results, key=lambda x: x[1], reverse=True)
-
-    def _evaluate_clause(
-        self, positives: List[str], negatives: List[str]
-    ) -> Set[str]:
-        """Intersect positive postings, then subtract negative postings."""
-        match: Set[str] | None = None
-        for term in positives:
-            if term not in self.indexer.index:
-                return set()
-            postings = set(self.indexer.index[term].keys())
-            match = postings if match is None else match & postings
-        if match is None:
-            return set()
-        for term in negatives:
-            if term in self.indexer.index:
-                match -= set(self.indexer.index[term].keys())
-        return match
 
     def suggest(self, partial_word: str | None) -> List[str]:
         """Return up to :attr:`MAX_SUGGESTIONS` candidate corrections.
@@ -234,6 +182,87 @@ class SearchEngine:
             )
         print()
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _parse_query(
+        self, query: str
+    ) -> List[Tuple[List[str], List[str]]]:
+        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
+
+        Adjacent clauses are joined by an implicit ``AND``; ``OR``
+        introduces a new clause; ``NOT`` flips the polarity of the
+        next term. Operators are uppercase only so regular lowercase
+        words like ``or`` aren't accidentally interpreted.
+        """
+        tokens = query.split()
+        clauses: List[Tuple[List[str], List[str]]] = []
+        positives: List[str] = []
+        negatives: List[str] = []
+        next_negative = False
+
+        for tok in tokens:
+            if tok == self._OP_OR:
+                if positives or negatives:
+                    clauses.append((positives, negatives))
+                positives, negatives = [], []
+                next_negative = False
+            elif tok == self._OP_NOT:
+                next_negative = True
+            elif tok == self._OP_AND:
+                # Explicit AND is a no-op (default behaviour).
+                next_negative = False
+            else:
+                term = tok.lower()
+                if next_negative:
+                    negatives.append(term)
+                    next_negative = False
+                else:
+                    positives.append(term)
+
+        if positives or negatives:
+            clauses.append((positives, negatives))
+        return clauses
+
+    def _evaluate_clause(
+        self, positives: List[str], negatives: List[str]
+    ) -> Set[str]:
+        """Intersect positive postings, then subtract negative postings."""
+        match: Set[str] | None = None
+        for term in positives:
+            if term not in self.indexer.index:
+                return set()
+            postings = set(self.indexer.index[term].keys())
+            match = postings if match is None else match & postings
+        if match is None:
+            return set()
+        for term in negatives:
+            if term in self.indexer.index:
+                match -= set(self.indexer.index[term].keys())
+        return match
+
+    def _phrase_bonus(self, terms: List[str], url: str) -> float:
+        """Return ``PHRASE_WEIGHT * (number of exact-phrase matches)``.
+
+        Position-set arithmetic: the phrase ``terms`` occurs starting
+        at position ``p`` iff ``p`` is in ``positions(terms[0])`` and
+        ``p+i`` is in ``positions(terms[i])`` for every later term.
+        Implemented as repeated intersection of position sets, each
+        shifted left by ``i``.
+        """
+        try:
+            base_positions = set(
+                self.indexer.index[terms[0]][url]['positions'])
+            for i, term in enumerate(terms[1:], 1):
+                shifted = set(
+                    p - i for p in
+                    self.indexer.index[term][url]['positions'])
+                base_positions = base_positions.intersection(shifted)
+            return self.PHRASE_WEIGHT * len(base_positions)
+        except (KeyError, TypeError):
+            return 0.0
+
     @staticmethod
     def _edit_distance(a: str, b: str, max_dist: int | None = None) -> int:
         """Levenshtein distance between ``a`` and ``b``.
@@ -271,17 +300,3 @@ class SearchEngine:
                 return max_dist + 1
             prev = curr
         return prev[lb]
-
-    def _phrase_bonus(self, terms: List[str], url: str) -> float:
-        """Return PHRASE_WEIGHT * (number of exact-phrase matches)."""
-        try:
-            base_positions = set(
-                self.indexer.index[terms[0]][url]['positions'])
-            for i, term in enumerate(terms[1:], 1):
-                shifted = set(
-                    p - i for p in
-                    self.indexer.index[term][url]['positions'])
-                base_positions = base_positions.intersection(shifted)
-            return self.PHRASE_WEIGHT * len(base_positions)
-        except (KeyError, TypeError):
-            return 0.0

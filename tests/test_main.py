@@ -137,10 +137,18 @@ class TestRunFind:
         captured = capsys.readouterr()
         assert "No pages found" in captured.out
 
-    def test_no_results_shows_suggestions(self, capsys):
+    def test_no_results_shows_suggestions_or_expansion(self, capsys):
+        # 'goo' has no direct hits. The CLI should either auto-expand
+        # it (goo→good) and show results, fall back to a 'Did you mean'
+        # hint, or show 'No pages found'. All three are acceptable; what
+        # we never want is a silent empty response.
         main_module.run_find(self.engine, self.indexer, "goo")
         captured = capsys.readouterr()
-        assert "Did you mean" in captured.out or "No pages found" in captured.out
+        assert (
+            "Did you mean" in captured.out
+            or "No pages found" in captured.out
+            or "corrected" in captured.out
+        )
 
     def test_multi_word_query_shows_results(self, capsys):
         main_module.run_find(self.engine, self.indexer, "good life")

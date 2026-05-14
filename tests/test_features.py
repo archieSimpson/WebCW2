@@ -6,6 +6,7 @@ Covers:
 * Snippet generation (:meth:`Indexer.get_snippet`)
 * Levenshtein edit distance and the enhanced fuzzy suggest
 * Boolean query parser and end-to-end ``OR`` / ``NOT`` queries
+* Per-term query expansion (:meth:`SearchEngine.expand_query`)
 """
 
 import os
@@ -376,3 +377,81 @@ class TestBM25Ranking:
         )
         results = engine.find("good friends")
         assert results[0][0] == "http://phrase.com"
+
+
+# ---------------------------------------------------------------------
+# Query expansion
+# ---------------------------------------------------------------------
+
+
+class TestExpandQuery:
+
+    def setup_method(self):
+        self.engine, _ = make_engine(
+            ("http://a.com", "<p>good friends together</p>"),
+            ("http://b.com", "<p>good life lived well</p>"),
+            ("http://c.com", "<p>indifference is the enemy of good</p>"),
+        )
+
+    def test_unchanged_when_all_terms_present(self):
+        expanded, subs = self.engine.expand_query("good friends")
+        assert expanded == "good friends"
+        assert subs == {}
+
+    def test_substitutes_single_typo(self):
+        expanded, subs = self.engine.expand_query("gud friends")
+        assert "good" in expanded
+        assert subs == {"gud": "good"}
+
+    def test_preserves_operators(self):
+        expanded, subs = self.engine.expand_query("gud OR enemy")
+        assert "OR" in expanded.split()
+        # 'gud' should map to 'good', 'enemy' stays put
+        assert subs.get("gud") == "good"
+
+    def test_preserves_not(self):
+        expanded, subs = self.engine.expand_query("good NOT enmey")
+        tokens = expanded.split()
+        assert "NOT" in tokens
+        assert "enmey" not in tokens  # rewritten
+        # 'enmey' is one edit from 'enemy', expect substitution
+        assert "enmey" in subs
+
+    def test_unresolvable_term_left_untouched(self):
+        # 'xyznotaword' is far from every indexed token — no candidate.
+        expanded, subs = self.engine.expand_query("good xyznotaword")
+        assert "xyznotaword" in expanded
+        assert subs == {}
+
+    def test_empty_query_returns_empty(self):
+        expanded, subs = self.engine.expand_query("")
+        assert expanded == ""
+        assert subs == {}
+
+    def test_none_query_returns_empty(self):
+        expanded, subs = self.engine.expand_query(None)
+        assert expanded == ""
+        assert subs == {}
+
+    def test_expansion_unlocks_find(self):
+        # The whole point: find('gud friends') returns nothing,
+        # but find on the expanded query should return results.
+        assert self.engine.find("gud friends") == []
+        expanded, subs = self.engine.expand_query("gud friends")
+        assert subs  # something got rewritten
+        results = self.engine.find(expanded)
+        assert len(results) > 0
+        assert "http://a.com" in [u for u, _ in results]
+
+    def test_substitution_is_lowercased_key(self):
+        # Original casing of the user's typo is normalised to lowercase
+        # in the substitutions dict so callers can match against the
+        # parsed query terms reliably.
+        _, subs = self.engine.expand_query("Gud friends")
+        assert "gud" in subs
+
+    def test_exact_match_short_circuits_no_self_substitution(self):
+        # If suggest('good') returns ['good', ...], we must not record
+        # 'good' → 'good' as a substitution.
+        _, subs = self.engine.expand_query("good")
+        assert "good" not in subs

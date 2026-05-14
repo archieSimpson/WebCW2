@@ -13,7 +13,12 @@ The tool ships as a small command-line shell with four commands —
 - **Boolean query operators** — `AND` (default), `OR`, `NOT`
 - **Fuzzy "did you mean"** combining prefix matching and **Levenshtein
   edit distance** so both partial words and typos get corrected
+- **Per-term query expansion** — `find gud friends` is silently rewritten
+  to `find good friends` with the substitution surfaced to the user,
+  instead of failing the AND-intersection on the missing token
 - **Result snippets** with query-term highlighting
+- **Benchmark harness** validating the complexity analysis on a
+  synthetic corpus (see [Benchmarks](#benchmarks))
 
 ---
 
@@ -363,6 +368,74 @@ WebCW2/
 | `print` a word | `O(|postings|)` | `O(|postings|)` |
 | `suggest` (V vocabulary, partial of length p) | `O(V · p²)` worst case; truncated by the early-exit Levenshtein bound to `O(V · p · max_dist)` | `O(p)` |
 | Save / load (JSON) | `O(|index|)` | `O(|index|)` |
+
+---
+
+## Benchmarks
+
+The complexity table above is the theoretical story; the harness in
+[benchmarks/benchmark.py](benchmarks/benchmark.py) validates it
+empirically against a synthetic corpus so the numbers are reproducible
+without hitting the network.
+
+```bash
+python benchmarks/benchmark.py            # full run, ~2 s
+python benchmarks/benchmark.py --quick    # smoke run, ~0.5 s
+```
+
+The full run reports three things, all on a fixed corpus of **50
+documents × 400 tokens** with **30 iterations** per measurement
+(Python 3.14, Apple Silicon laptop — your numbers will vary):
+
+### 1. TF-IDF vs BM25 scoring latency
+
+Per-query, summed over the documents in the corpus the same way
+`SearchEngine.find` does:
+
+| Ranker / query             | Median (ms) | Stdev (ms) |
+|----------------------------|-------------|------------|
+| `tfidf  'good'`            |       0.020 |      0.014 |
+| `bm25   'good'`            |       0.025 |      0.005 |
+| `tfidf  'good life'`       |       0.032 |      0.006 |
+| `bm25   'good life'`       |       0.043 |      0.000 |
+| `tfidf  'good life friends'`|      0.045 |      0.004 |
+| `bm25   'good life friends'`|      0.062 |      0.001 |
+
+**Reading the table:** BM25 is ~25–40 % slower than TF-IDF per term,
+which lines up with the formula being slightly more expensive (an
+extra `f * (k1 + 1) / (f + k1 · (1 − b + b · dl/avgdl))` saturating
+ratio per term). At sub-100 µs per query over a 50-doc corpus the
+difference is irrelevant in absolute terms; the relative cost is
+worth knowing if the corpus grew by 100×. The trade-off chosen is
+**ranking quality over a vanishingly small amount of extra CPU** —
+see the BM25 saturation point in the rationale table above.
+
+### 2. `suggest()` latency vs vocabulary size
+
+Using `gud` as the partial — a typo of `good` with no prefix overlap,
+so the fuzzy branch is forced to consider every word in the index:
+
+| Vocabulary size | Median (ms) | Stdev (ms) |
+|-----------------|-------------|------------|
+|              50 |       0.035 |      0.002 |
+|             200 |       0.052 |      0.001 |
+|             800 |       0.118 |      0.012 |
+|            3200 |       0.393 |      0.022 |
+
+**Reading the table:** ~4× the vocabulary gives ~3× the time — slightly
+sub-linear because the `max_dist` early-exit short-circuits more
+distant words before they finish the full DP. This matches the
+`O(V · p · max_dist)` bound from the complexity table. At 3200 words
+we're at ~400 µs, well below human-perceptible latency for an
+interactive shell.
+
+### 3. Indexing throughput
+
+Built **50 docs × 400 tokens in ≈16 ms ≈ 3 100 pages/sec** on the
+same machine. The quotes.toscrape.com corpus is ~50 pages, so the
+indexing stage takes a small fraction of a second once the HTML is
+in memory — the wall-clock crawl is dominated by the politeness
+window (6 s × N pages), exactly as expected.
 
 ---
 

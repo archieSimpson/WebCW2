@@ -87,7 +87,14 @@ def _query_terms(query: str) -> list[str]:
 def run_find(
     engine: SearchEngine, indexer: Indexer, argument: str
 ) -> None:
-    """Handle the ``find <query>`` shell command."""
+    """Handle the ``find <query>`` shell command.
+
+    On an empty result we attempt a per-term fuzzy rewrite via
+    :meth:`SearchEngine.expand_query` (e.g. ``gud friends`` →
+    ``good friends``) before falling back to the legacy "did you
+    mean" hint. This avoids the previous failure mode where one
+    mistyped term killed the entire AND-intersection.
+    """
     if not argument:
         print("Usage: find <word> [word2 ...]   "
               "(AND/OR/NOT supported, uppercase)")
@@ -95,7 +102,21 @@ def run_find(
     if not indexer.index:
         print("Index is empty. Run 'build' or 'load' first.")
         return
+
+    display_query = argument
     results = engine.find(argument)
+    if not results:
+        expanded, subs = engine.expand_query(argument)
+        if subs and expanded != argument:
+            results = engine.find(expanded)
+            if results:
+                pretty = ", ".join(
+                    f"{orig}→{repl}" for orig, repl in subs.items()
+                )
+                print(f"(Showing results for '{expanded}' "
+                      f"— corrected: {pretty})")
+                display_query = expanded
+                argument = expanded
     if not results:
         print(f"No pages found for '{argument}'.")
         terms = _query_terms(argument)
@@ -106,7 +127,7 @@ def run_find(
         return
 
     terms = _query_terms(argument)
-    print(f"\nFound {len(results)} page(s) for '{argument}':")
+    print(f"\nFound {len(results)} page(s) for '{display_query}':")
     print(f"  {'Score':>8}  URL")
     print(f"  {'-' * 70}")
     for url, score in results:

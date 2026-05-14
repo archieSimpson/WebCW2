@@ -181,8 +181,16 @@ class SearchEngine:
            scales with query length (one edit per ~3 characters), so
            short queries don't match too liberally.
 
-        Prefix matches always come first, then fuzzy matches sorted by
-        ascending distance.
+        Prefix matches always come first. Fuzzy matches are sorted by:
+
+        * **ascending edit distance** (closer wins);
+        * then **descending document frequency** — the Norvig (2007)
+          spelling-corrector heuristic, breaking ties by the
+          probability of the word in the corpus. Without this,
+          ``gud`` (2 edits from both ``good`` and ``and``) would
+          rewrite to ``and`` purely on alphabetical order, which is
+          obviously wrong;
+        * then alphabetical as a final deterministic fallback.
         """
         if not partial_word:
             return []
@@ -207,15 +215,20 @@ class SearchEngine:
         else:
             threshold = max(2, len(partial) // 3)
         seen = set(prefix_matches)
-        fuzzy: List[Tuple[int, str]] = []
+        # Sort key is (distance, -df, word):
+        #   distance ↑  — closer is better
+        #   -df      ↑  — higher df (more common) is better
+        #   word     ↑  — alphabetical as a stable final tiebreak
+        fuzzy: List[Tuple[int, int, str]] = []
         for w in self.indexer.index:
             if w in seen:
                 continue
             d = self._edit_distance(partial, w, threshold)
             if d <= threshold:
-                fuzzy.append((d, w))
+                df = len(self.indexer.index[w])
+                fuzzy.append((d, -df, w))
         fuzzy.sort()
-        combined = prefix_matches + [w for _, w in fuzzy]
+        combined = prefix_matches + [w for _, _, w in fuzzy]
         return combined[:self.MAX_SUGGESTIONS]
 
     def print_index(self, word: str) -> None:

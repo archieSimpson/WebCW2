@@ -273,6 +273,44 @@ class TestFuzzySuggest:
         assert len(suggestions) == SearchEngine.MAX_SUGGESTIONS
         assert all(s.startswith("good") for s in suggestions)
 
+    def test_suggest_prefers_more_common_word_on_tie(self):
+        """Norvig (2007) tiebreak: when two candidates are at the same
+        edit distance, prefer the one with higher document frequency.
+
+        Without this, ``gud`` (2 edits from both ``good`` and ``and``)
+        would rewrite to ``and`` purely on alphabetical order — which
+        leads to confusing "showing results for and friends — corrected:
+        gud→and" output when the user clearly meant ``good``.
+        """
+        indexer = Indexer()
+        # 'good' appears in 5 documents — high df.
+        for i in range(5):
+            indexer.index_page(
+                f"http://d{i}.com", "<p>good things</p>"
+            )
+        # 'and' appears in 1 document — low df.
+        indexer.index_page("http://r.com", "<p>and rare</p>")
+        engine = SearchEngine(indexer)
+        # 'gud' is distance 2 from both 'good' and 'and'.
+        # The df-aware tiebreak should prefer 'good' (df=5) over
+        # 'and' (df=1) even though 'and' wins alphabetically.
+        assert engine.suggest("gud")[0] == "good"
+
+    def test_expand_query_picks_common_word_on_tie(self):
+        """End-to-end: expand_query must inherit the df-aware
+        tiebreak, otherwise 'gud friends' would be rewritten to
+        'and friends' and surface a confusing user notice.
+        """
+        indexer = Indexer()
+        for i in range(5):
+            indexer.index_page(
+                f"http://d{i}.com", "<p>good friends together</p>"
+            )
+        indexer.index_page("http://r.com", "<p>and rare</p>")
+        engine = SearchEngine(indexer)
+        _, subs = engine.expand_query("gud friends")
+        assert subs.get("gud") == "good"
+
 
 # ---------------------------------------------------------------------
 # Boolean query parser + end-to-end search

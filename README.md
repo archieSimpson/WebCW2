@@ -353,6 +353,8 @@ WebCW2/
 | **Lucene-style smoothed IDF** for BM25 | `log(1 + (N − df + 0.5)/(df + 0.5))` is always non-negative — even for terms that appear in every document — so the score stays well-behaved. |
 | Boolean operators uppercase-only | Keeps the lowercase words `or` / `and` / `not` available as ordinary search terms. Documented and visible in the shell's `help` text. |
 | Hybrid prefix + edit-distance suggest | Pure prefix misses typos (`gud` → `good`); pure edit distance misses partials (`go` → `good`). Combining the two covers both. Threshold is tuned (1 edit for ≤ 2-char queries, 2 for 3-5 chars, then ~⅓ length) to balance recall against false positives. |
+| **`suggest` tiebreak by document frequency** (Norvig 2007) | At the same edit distance, multiple candidates are usually plausible (`gud` is 2 edits from both `good` and `and`). Pure alphabetical order picks `and` — confidently wrong. Sorting by `(distance, -df, word)` prefers the more common word, matching Peter Norvig's spelling-corrector heuristic (more frequent ⇒ more likely intended). |
+| **Per-term fuzzy rewrite** (`expand_query`) | `find` returns empty as soon as one AND-term is missing, and `suggest` only fires on the *whole* query — so `find gud friends` would fail outright. `expand_query` walks the tokens, substitutes any missing term with its top fuzzy candidate, and surfaces the substitutions to the user (*"showing results for `good friends` — corrected: `gud→good`"*). Operators are preserved; unresolvable terms are left untouched so the search fails legibly rather than silently. |
 | Snippets stored as token lists | Generating snippets requires the original document text. Storing the tokens (~25 KB total for this corpus) is tiny next to the inverted index and avoids any need to re-crawl when serving snippets. |
 | Default conjunctive multi-word semantics | The brief shows `find good friends` returning pages containing both terms — "AND" is the obvious reading. Boolean operators are layered on top without changing the default. |
 
@@ -453,6 +455,10 @@ window (6 s × N pages), exactly as expected.
 - Levenshtein, V. I. (1966), *Binary codes capable of correcting
   deletions, insertions, and reversals* — origin of the edit-distance
   algorithm used by `suggest`.
+- Norvig, P. (2007), *How to Write a Spelling Corrector* —
+  <https://norvig.com/spell-correct.html>. Source of the "rank by
+  corpus frequency among candidates at equal edit distance" heuristic
+  used to break ties in `suggest`.
 
 ---
 

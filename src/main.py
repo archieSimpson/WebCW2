@@ -15,17 +15,28 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, os.path.dirname(__file__))
+# ``__file__`` is src/main.py, so the project root is its parent's parent.
+_SRC_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SRC_DIR.parent
+
+sys.path.insert(0, str(_SRC_DIR))
 
 from crawler import Crawler  # noqa: E402
 from indexer import Indexer  # noqa: E402
 from search import SearchEngine  # noqa: E402
 
 BASE_URL: str = "https://quotes.toscrape.com/"
-INDEX_FILE: str = os.path.join(
-    os.path.dirname(__file__), '..', 'data', 'index.json')
+# ``pathlib.Path`` gives us OS-independent path joining, ``.parent``
+# navigation, ``.mkdir(parents=True, exist_ok=True)`` in one call, and
+# implicit ``__fspath__`` so it still works wherever the rest of the
+# code passes a string to ``open()`` or ``os.path.exists``. The old
+# ``os.path.join(os.path.dirname(__file__), '..', 'data', ...)`` form
+# leaves a literal ``..`` in the string which is harder to reason about
+# when the cwd changes (e.g. tests in a tempdir).
+INDEX_FILE: str = str(_PROJECT_ROOT / "data" / "index.json")
 
 
 def run_build(indexer: Indexer) -> SearchEngine:
@@ -87,7 +98,14 @@ def _query_terms(query: str) -> list[str]:
 def run_find(
     engine: SearchEngine, indexer: Indexer, argument: str
 ) -> None:
-    """Handle the ``find <query>`` shell command."""
+    """Handle the ``find <query>`` shell command.
+
+    On an empty result we attempt a per-term fuzzy rewrite via
+    :meth:`SearchEngine.expand_query` (e.g. ``gud friends`` →
+    ``good friends``) before falling back to the legacy "did you
+    mean" hint. This avoids the previous failure mode where one
+    mistyped term killed the entire AND-intersection.
+    """
     if not argument:
         print("Usage: find <word> [word2 ...]   "
               "(AND/OR/NOT supported, uppercase)")
@@ -95,7 +113,21 @@ def run_find(
     if not indexer.index:
         print("Index is empty. Run 'build' or 'load' first.")
         return
+
+    display_query = argument
     results = engine.find(argument)
+    if not results:
+        expanded, subs = engine.expand_query(argument)
+        if subs and expanded != argument:
+            results = engine.find(expanded)
+            if results:
+                pretty = ", ".join(
+                    f"{orig}→{repl}" for orig, repl in subs.items()
+                )
+                print(f"(Showing results for '{expanded}' "
+                      f"— corrected: {pretty})")
+                display_query = expanded
+                argument = expanded
     if not results:
         print(f"No pages found for '{argument}'.")
         terms = _query_terms(argument)
@@ -106,7 +138,7 @@ def run_find(
         return
 
     terms = _query_terms(argument)
-    print(f"\nFound {len(results)} page(s) for '{argument}':")
+    print(f"\nFound {len(results)} page(s) for '{display_query}':")
     print(f"  {'Score':>8}  URL")
     print(f"  {'-' * 70}")
     for url, score in results:

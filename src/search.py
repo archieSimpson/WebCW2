@@ -10,18 +10,26 @@ Implements:
 * ``suggest(word)`` — "did you mean" candidates combining prefix
   matching and Levenshtein edit distance, so both partial words
   (``go`` → ``good``) and typos (``gud`` → ``good``) are corrected.
+* ``expand_query(query)`` — fuzzy-aware per-term substitution so a
+  query like ``gud friends`` can be rewritten to ``good friends``
+  instead of returning empty (with the substitutions surfaced for
+  user notification).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Set, Tuple
 
 if TYPE_CHECKING:
     from indexer import Indexer
 
 
 class SearchEngine:
-    """Wraps an :class:`Indexer` and answers user queries."""
+    """Wraps an :class:`Indexer` and answers user queries.
+
+    The engine itself is stateless apart from the indexer reference;
+    one instance can serve any number of concurrent queries.
+    """
 
     # Multiplicative weight applied to each contiguous-phrase match.
     # 2.0 is conservative — high enough that an exact phrase outranks
@@ -44,45 +52,6 @@ class SearchEngine:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    def _parse_query(
-        self, query: str
-    ) -> List[Tuple[List[str], List[str]]]:
-        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
-
-        Adjacent clauses are joined by an implicit ``AND``; ``OR``
-        introduces a new clause; ``NOT`` flips the polarity of the
-        next term. Operators are uppercase only so regular lowercase
-        words like ``or`` aren't accidentally interpreted.
-        """
-        tokens = query.split()
-        clauses: List[Tuple[List[str], List[str]]] = []
-        positives: List[str] = []
-        negatives: List[str] = []
-        next_negative = False
-
-        for tok in tokens:
-            if tok == self._OP_OR:
-                if positives or negatives:
-                    clauses.append((positives, negatives))
-                positives, negatives = [], []
-                next_negative = False
-            elif tok == self._OP_NOT:
-                next_negative = True
-            elif tok == self._OP_AND:
-                # Explicit AND is a no-op (default behaviour).
-                next_negative = False
-            else:
-                term = tok.lower()
-                if next_negative:
-                    negatives.append(term)
-                    next_negative = False
-                else:
-                    positives.append(term)
-
-        if positives or negatives:
-            clauses.append((positives, negatives))
-        return clauses
 
     def find(self, query: str | None) -> List[Tuple[str, float]]:
         """Return ``[(url, score), ...]`` ranked best-first.
@@ -128,6 +97,12 @@ class SearchEngine:
 
         results: List[Tuple[str, float]] = []
         for url, positives in matched.items():
+            # If a doc is matched by multiple OR disjuncts we score
+            # using only the *first* disjunct's positives. This is a
+            # deliberate simplification: scoring against every matching
+            # disjunct would over-weight docs that happen to satisfy
+            # several alternatives, which usually isn't what the user
+            # means when they write ``A OR B``.
             score = sum(
                 self.indexer.get_bm25(term, url) for term in positives
             )
@@ -137,22 +112,62 @@ class SearchEngine:
 
         return sorted(results, key=lambda x: x[1], reverse=True)
 
-    def _evaluate_clause(
-        self, positives: List[str], negatives: List[str]
-    ) -> Set[str]:
-        """Intersect positive postings, then subtract negative postings."""
-        match: Set[str] | None = None
-        for term in positives:
-            if term not in self.indexer.index:
-                return set()
-            postings = set(self.indexer.index[term].keys())
-            match = postings if match is None else match & postings
-        if match is None:
-            return set()
-        for term in negatives:
-            if term in self.indexer.index:
-                match -= set(self.indexer.index[term].keys())
-        return match
+    def expand_query(
+        self, query: str | None
+    ) -> Tuple[str, Dict[str, str]]:
+        """Rewrite ``query`` substituting missing terms with their top
+        fuzzy suggestion.
+
+        This is the missing piece between :meth:`find` and
+        :meth:`suggest`: ``find`` currently returns empty as soon as a
+        single positive term is absent from the index (because the
+        AND-intersection collapses to the empty set), and ``suggest``
+        only fires on the *whole query* — so ``find gud friends`` would
+        fail outright even though ``gud`` is one edit away from a real
+        word.
+
+        ``expand_query`` walks the tokens, leaves operators alone,
+        passes through any term already in the index, and replaces each
+        missing term by its first ``suggest`` candidate (if one
+        exists). The returned ``substitutions`` mapping lets the caller
+        notify the user — e.g. "showing results for gud→good".
+
+        Returns:
+            ``(expanded_query, substitutions)`` where ``substitutions``
+            is ``{original_lower: replacement}``. Empty mapping means
+            no rewrite happened.
+
+        Complexity: one ``suggest`` call per missing term — so
+        ``O(M · V · L)`` worst case for ``M`` missing terms over a
+        vocabulary of size ``V`` and average word length ``L``.
+        """
+        if not query or not query.strip():
+            return query or "", {}
+
+        tokens = query.split()
+        substitutions: Dict[str, str] = {}
+        new_tokens: List[str] = []
+        operators = (self._OP_AND, self._OP_OR, self._OP_NOT)
+
+        for tok in tokens:
+            if tok in operators:
+                new_tokens.append(tok)
+                continue
+            lower = tok.lower()
+            if lower in self.indexer.index:
+                new_tokens.append(tok)
+                continue
+            # Missing term — try to repair it.
+            candidates = self.suggest(lower)
+            if candidates and candidates[0] != lower:
+                new_tokens.append(candidates[0])
+                substitutions[lower] = candidates[0]
+            else:
+                # No good candidate; leave it as-is so the search
+                # fails naturally (or the user sees what was unknown).
+                new_tokens.append(tok)
+
+        return " ".join(new_tokens), substitutions
 
     def suggest(self, partial_word: str | None) -> List[str]:
         """Return up to :attr:`MAX_SUGGESTIONS` candidate corrections.
@@ -234,6 +249,94 @@ class SearchEngine:
             )
         print()
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _parse_query(
+        self, query: str
+    ) -> List[Tuple[List[str], List[str]]]:
+        """Parse ``query`` into a list of ``(positives, negatives)`` clauses.
+
+        Adjacent clauses are joined by an implicit ``AND``; ``OR``
+        introduces a new clause; ``NOT`` flips the polarity of the
+        next term. Operators are uppercase only so regular lowercase
+        words like ``or`` aren't accidentally interpreted.
+        """
+        tokens = query.split()
+        clauses: List[Tuple[List[str], List[str]]] = []
+        positives: List[str] = []
+        negatives: List[str] = []
+        next_negative = False
+
+        for tok in tokens:
+            if tok == self._OP_OR:
+                if positives or negatives:
+                    clauses.append((positives, negatives))
+                positives, negatives = [], []
+                next_negative = False
+            elif tok == self._OP_NOT:
+                next_negative = True
+            elif tok == self._OP_AND:
+                # Explicit AND is a no-op (default behaviour).
+                next_negative = False
+            else:
+                term = tok.lower()
+                if next_negative:
+                    negatives.append(term)
+                    next_negative = False
+                else:
+                    positives.append(term)
+
+        if positives or negatives:
+            clauses.append((positives, negatives))
+        return clauses
+
+    def _evaluate_clause(
+        self, positives: List[str], negatives: List[str]
+    ) -> Set[str]:
+        """Intersect positive postings, then subtract negative postings.
+
+        Callers in :meth:`find` filter out clauses with empty positives
+        before invoking this, so the ``match is None`` branch below is
+        defensive — it only fires if a future caller forgets that
+        contract. Marked ``no cover`` to keep the coverage report honest
+        about which code paths the test suite actually exercises.
+        """
+        match: Set[str] | None = None
+        for term in positives:
+            if term not in self.indexer.index:
+                return set()
+            postings = set(self.indexer.index[term].keys())
+            match = postings if match is None else match & postings
+        if match is None:  # pragma: no cover - guarded by caller
+            return set()
+        for term in negatives:
+            if term in self.indexer.index:
+                match -= set(self.indexer.index[term].keys())
+        return match
+
+    def _phrase_bonus(self, terms: List[str], url: str) -> float:
+        """Return ``PHRASE_WEIGHT * (number of exact-phrase matches)``.
+
+        Position-set arithmetic: the phrase ``terms`` occurs starting
+        at position ``p`` iff ``p`` is in ``positions(terms[0])`` and
+        ``p+i`` is in ``positions(terms[i])`` for every later term.
+        Implemented as repeated intersection of position sets, each
+        shifted left by ``i``.
+        """
+        try:
+            base_positions = set(
+                self.indexer.index[terms[0]][url]['positions'])
+            for i, term in enumerate(terms[1:], 1):
+                shifted = set(
+                    p - i for p in
+                    self.indexer.index[term][url]['positions'])
+                base_positions = base_positions.intersection(shifted)
+            return self.PHRASE_WEIGHT * len(base_positions)
+        except (KeyError, TypeError):
+            return 0.0
+
     @staticmethod
     def _edit_distance(a: str, b: str, max_dist: int | None = None) -> int:
         """Levenshtein distance between ``a`` and ``b``.
@@ -271,17 +374,3 @@ class SearchEngine:
                 return max_dist + 1
             prev = curr
         return prev[lb]
-
-    def _phrase_bonus(self, terms: List[str], url: str) -> float:
-        """Return PHRASE_WEIGHT * (number of exact-phrase matches)."""
-        try:
-            base_positions = set(
-                self.indexer.index[terms[0]][url]['positions'])
-            for i, term in enumerate(terms[1:], 1):
-                shifted = set(
-                    p - i for p in
-                    self.indexer.index[term][url]['positions'])
-                base_positions = base_positions.intersection(shifted)
-            return self.PHRASE_WEIGHT * len(base_positions)
-        except (KeyError, TypeError):
-            return 0.0

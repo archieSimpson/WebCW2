@@ -124,8 +124,12 @@ class TestMainLoop:
 class TestRunFindEdgeCases:
 
     @patch('src.main.Crawler')
-    def test_find_with_no_match_offers_suggestions(
+    def test_find_with_no_match_offers_suggestions_or_expansion(
             self, MockCrawler, capsys):
+        # 'goo' is a partial that auto-expands to 'good' via the new
+        # per-term rewrite. We allow either path (expanded results,
+        # 'Did you mean' hint, or 'No pages found') — what matters is
+        # that the user never gets a silent empty response.
         mock_crawler = MagicMock()
         mock_crawler.crawl.return_value = {
             "http://a.com": "<p>good goodbye</p>",
@@ -136,4 +140,24 @@ class TestRunFindEdgeCases:
                 _drive_main(["build", "find goo", "quit"])
         captured = capsys.readouterr()
         assert ("Did you mean" in captured.out
-                or "No pages found" in captured.out)
+                or "No pages found" in captured.out
+                or "corrected" in captured.out)
+
+    @patch('src.main.Crawler')
+    def test_find_auto_expands_mistyped_term(
+            self, MockCrawler, capsys):
+        # 'gud friends' would normally return empty because 'gud' isn't
+        # indexed. run_find should rewrite via expand_query and surface
+        # the substitution to the user.
+        mock_crawler = MagicMock()
+        mock_crawler.crawl.return_value = {
+            "http://a.com": "<p>good friends together always</p>",
+        }
+        MockCrawler.return_value = mock_crawler
+        with patch('src.main.os.makedirs'):
+            with patch('src.main.Indexer.save'):
+                _drive_main(["build", "find gud friends", "quit"])
+        captured = capsys.readouterr()
+        assert "gud" in captured.out  # original surfaced in notice
+        assert "good" in captured.out  # replacement surfaced
+        assert "http://a.com" in captured.out  # actually returned the hit

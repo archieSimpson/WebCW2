@@ -15,17 +15,28 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, os.path.dirname(__file__))
+# ``__file__`` is src/main.py, so the project root is its parent's parent.
+_SRC_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SRC_DIR.parent
+
+sys.path.insert(0, str(_SRC_DIR))
 
 from crawler import Crawler  # noqa: E402
 from indexer import Indexer  # noqa: E402
 from search import SearchEngine  # noqa: E402
 
 BASE_URL: str = "https://quotes.toscrape.com/"
-INDEX_FILE: str = os.path.join(
-    os.path.dirname(__file__), '..', 'data', 'index.json')
+# ``pathlib.Path`` gives us OS-independent path joining, ``.parent``
+# navigation, ``.mkdir(parents=True, exist_ok=True)`` in one call, and
+# implicit ``__fspath__`` so it still works wherever the rest of the
+# code passes a string to ``open()`` or ``os.path.exists``. The old
+# ``os.path.join(os.path.dirname(__file__), '..', 'data', ...)`` form
+# leaves a literal ``..`` in the string which is harder to reason about
+# when the cwd changes (e.g. tests in a tempdir).
+INDEX_FILE: str = str(_PROJECT_ROOT / "data" / "index.json")
 
 
 def run_build(indexer: Indexer) -> SearchEngine:
